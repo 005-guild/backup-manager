@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.backupmanager.DatabaseMapper">
+  <resultMap id="databaseRow" type="com.example.backupmanager.DatabaseRow">
+    <constructor>
+      <idArg column="id" javaType="_long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="monitor_from" javaType="java.time.LocalDate"/>
+      <arg column="active" javaType="_boolean"/>
+      <arg column="backup_count" javaType="_long"/>
+      <arg column="latest_event" javaType="java.time.Instant"/>
+      <arg column="dbid" javaType="java.lang.String"/>
+      <arg column="tag" javaType="java.lang.String"/>
+      <arg column="lifecycle_status" javaType="java.lang.String"/>
+      <arg column="security_tier" javaType="java.lang.String"/>
+      <arg column="framework" javaType="java.lang.String"/>
+      <arg column="db_version" javaType="java.lang.String"/>
+      <arg column="subsystem" javaType="java.lang.String"/>
+      <arg column="developer" javaType="java.lang.String"/>
+      <arg column="dba" javaType="java.lang.String"/>
+      <arg column="service_unit" javaType="java.lang.String"/>
+      <arg column="created_on" javaType="java.time.LocalDate"/>
+    </constructor>
+  </resultMap>
+
+  <sql id="databaseWithSummary">
+    select d.*, coalesce(s.backup_count, 0) backup_count, s.latest_event
+    from database_catalog d
+    left join (
+      select database_id, count(*) backup_count, max(event_time) latest_event
+      from backup_record
+      group by database_id
+    ) s on s.database_id = d.id
+  </sql>
+
+  <select id="findAll" resultMap="databaseRow">
+    <include refid="databaseWithSummary"/>
+    where lower(d.name) like lower(#{pattern})
+    order by d.name
+  </select>
+
+  <select id="findById" resultMap="databaseRow">
+    select d.*, coalesce(s.backup_count, 0) backup_count, s.latest_event
+    from database_catalog d
+    left join (
+      select database_id, count(*) backup_count, max(event_time) latest_event
+      from backup_record
+      where database_id = #{id}
+      group by database_id
+    ) s on s.database_id = d.id
+    where d.id = #{id}
+  </select>
+
+  <select id="findIdByName" resultType="java.lang.Long">
+    select id from database_catalog where name = #{name}
+  </select>
+
+  <insert id="insert">
+    insert into database_catalog(name, monitor_from, monitor_from_auto)
+    values(#{name}, #{monitorFrom}, #{monitorFromAuto})
+  </insert>
+
+  <update id="moveAutomaticMonitorStart">
+    update database_catalog
+    set monitor_from = #{firstDate}
+    where name = #{name} and monitor_from_auto = true and monitor_from &gt; #{firstDate}
+  </update>
+
+  <update id="updateMetadata">
+    update database_catalog
+    set dbid = #{metadata.dbid,jdbcType=VARCHAR},
+        tag = #{metadata.tag,jdbcType=VARCHAR},
+        lifecycle_status = #{metadata.lifecycleStatus,jdbcType=VARCHAR},
+        security_tier = #{metadata.securityTier,jdbcType=VARCHAR},
+        framework = #{metadata.framework,jdbcType=VARCHAR},
+        db_version = #{metadata.dbVersion,jdbcType=VARCHAR},
+        subsystem = #{metadata.subsystem,jdbcType=VARCHAR},
+        developer = #{metadata.developer,jdbcType=VARCHAR},
+        dba = #{metadata.dba,jdbcType=VARCHAR},
+        service_unit = #{metadata.serviceUnit,jdbcType=VARCHAR},
+        created_on = #{metadata.createdOn,jdbcType=DATE}
+    where id = #{id}
+  </update>
+
+  <update id="setDemoMonitoring">
+    update database_catalog
+    set monitor_from = #{monitorFrom}, monitor_from_auto = false
+    where id = #{id} and name = #{name}
+  </update>
+</mapper>

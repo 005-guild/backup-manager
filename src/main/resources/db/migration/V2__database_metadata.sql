@@ -1,0 +1,11 @@
+ALTER TABLE database_catalog ADD COLUMN dbid VARCHAR(100);
+ALTER TABLE database_catalog ADD COLUMN tag VARCHAR(100);
+ALTER TABLE database_catalog ADD COLUMN lifecycle_status VARCHAR(40);
+ALTER TABLE database_catalog ADD COLUMN security_tier VARCHAR(40);
+ALTER TABLE database_catalog ADD COLUMN framework VARCHAR(80);
+ALTER TABLE database_catalog ADD COLUMN db_version VARCHAR(80);
+ALTER TABLE database_catalog ADD COLUMN subsystem VARCHAR(100);
+ALTER TABLE database_catalog ADD COLUMN developer VARCHAR(100);
+ALTER TABLE database_catalog ADD COLUMN dba VARCHAR(100);
+ALTER TABLE database_catalog ADD COLUMN service_unit VARCHAR(100);
+ALTER TABLE database_catalog ADD COLUMN created_on DATE;

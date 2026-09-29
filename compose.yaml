@@ -1,0 +1,62 @@
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: backup_manager
+      POSTGRES_USER: backup_manager
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U backup_manager -d backup_manager"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend.Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/backup_manager
+      DB_USER: backup_manager
+      APP_SCHEDULER_ENABLED: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: backend.Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/backup_manager
+      DB_USER: backup_manager
+      APP_SCHEDULER_ENABLED: "true"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

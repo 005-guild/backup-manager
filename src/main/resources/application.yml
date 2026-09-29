@@ -1,0 +1,51 @@
+spring:
+  application:
+    name: backup-manager
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/backup_manager}
+    username: ${DB_USER:backup_manager}
+    password: ${DB_PASSWORD:}
+  session:
+    store-type: jdbc
+    jdbc:
+      initialize-schema: never
+    timeout: 12h
+  flyway:
+    enabled: true
+mybatis:
+  mapper-locations: classpath*:mapper/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+    jdbc-type-for-null: NULL
+server:
+  forward-headers-strategy: framework
+  servlet:
+    session:
+      cookie:
+        http-only: true
+        same-site: lax
+        secure: ${COOKIE_SECURE:false}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+app:
+  daily-url: ${BACKUP_DAILY_URL:}
+  daily-token: ${BACKUP_DAILY_TOKEN:}
+  daily-data-path: ${BACKUP_DAILY_DATA_PATH:}
+  daily-page-size: ${BACKUP_DAILY_PAGE_SIZE:20000}
+  daily-max-pages: ${BACKUP_DAILY_MAX_PAGES:100}
+  oceanprotect-base-url: ${OCEANPROTECT_BASE_URL:}
+  oceanprotect-username: ${OCEANPROTECT_USERNAME:}
+  oceanprotect-password: ${OCEANPROTECT_PASSWORD:}
+  oceanprotect-auth-type: ${OCEANPROTECT_AUTH_TYPE:STORAGE_SYSTEM}
+  oceanprotect-user-type: ${OCEANPROTECT_USER_TYPE:common}
+  oceanprotect-language: ${OCEANPROTECT_LANGUAGE:1}
+  oceanprotect-page-size: ${OCEANPROTECT_PAGE_SIZE:100}
+  oceanprotect-sla-page-size: ${OCEANPROTECT_SLA_PAGE_SIZE:100}
+  oceanprotect-max-pages: ${OCEANPROTECT_MAX_PAGES:1000}
+  sync-cron: ${BACKUP_SYNC_CRON:0 0 6 * * *}
+  scheduler-enabled: ${APP_SCHEDULER_ENABLED:false}
+  admin-user: ${BOOTSTRAP_ADMIN_USER:}
+  admin-password: ${BOOTSTRAP_ADMIN_PASSWORD:}

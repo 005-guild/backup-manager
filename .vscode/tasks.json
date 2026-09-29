@@ -1,0 +1,29 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "1. 构建后端",
+      "type": "shell",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\scripts\\build-backend.ps1"],
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "2. 启动后端（本地数据库）",
+      "type": "shell",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\scripts\\run-local-backend.ps1"],
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "3. 启动前端",
+      "type": "shell",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\scripts\\run-local-frontend.ps1"],
+      "isBackground": true,
+      "problemMatcher": []
+    }
+  ]
+}

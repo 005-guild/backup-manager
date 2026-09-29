@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.backupmanager.RuleMapper">
+  <resultMap id="ruleRow" type="com.example.backupmanager.RuleRow">
+    <constructor>
+      <idArg column="id" javaType="_long"/>
+      <arg column="kind" javaType="java.lang.String"/>
+      <arg column="enabled" javaType="_boolean"/>
+      <arg column="grace_days" javaType="_int"/>
+      <arg column="retention_days" javaType="java.lang.Integer"/>
+      <arg column="note" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <select id="findAll" resultMap="ruleRow">
+    select * from backup_rule
+    order by case kind when 'daily' then 1 when 'monthly' then 2 else 3 end
+  </select>
+
+  <update id="update">
+    update backup_rule
+    set enabled = #{enabled}, grace_days = #{graceDays}, retention_days = #{retentionDays,jdbcType=INTEGER}
+    where id = #{id}
+  </update>
+</mapper>

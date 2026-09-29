@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.backupmanager.BackupMapper">
+  <resultMap id="backupRow" type="com.example.backupmanager.BackupRow">
+    <constructor>
+      <idArg column="id" javaType="_long"/>
+      <arg column="database_id" javaType="_long"/>
+      <arg column="database_name" javaType="java.lang.String"/>
+      <arg column="kind" javaType="java.lang.String"/>
+      <arg column="external_id" javaType="java.lang.String"/>
+      <arg column="backup_date" javaType="java.time.LocalDate"/>
+      <arg column="date_inferred" javaType="_boolean"/>
+      <arg column="event_time" javaType="java.time.Instant"/>
+      <arg column="status" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="calendarRow" type="map">
+    <result column="backup_date" property="backup_date"
+            javaType="java.time.LocalDate" jdbcType="DATE"
+            typeHandler="org.apache.ibatis.type.LocalDateTypeHandler"/>
+    <result column="backup_count" property="backup_count" javaType="java.lang.Long"/>
+  </resultMap>
+
+  <select id="find" resultMap="backupRow">
+    select b.*, d.name database_name
+    from backup_record b
+    join database_catalog d on d.id = b.database_id
+    <where>
+      <if test="databaseId != null">b.database_id = #{databaseId}</if>
+      <if test="from != null">and b.backup_date &gt;= #{from}</if>
+      <if test="to != null">and b.backup_date &lt;= #{to}</if>
+      <if test="kind != null and kind != ''">and b.kind = #{kind}</if>
+      <if test="status != null and status != ''">and lower(b.status) = lower(#{status})</if>
+    </where>
+    order by b.backup_date desc, b.event_time desc, b.id desc
+    limit #{limit} offset #{offset}
+  </select>
+
+  <select id="findForChecks" resultMap="backupRow">
+    select b.*, d.name database_name
+    from backup_record b
+    join database_catalog d on d.id = b.database_id
+    where b.database_id = #{databaseId}
+      and b.kind = #{kind}
+      and b.backup_date between #{from} and #{to}
+    order by b.backup_date, b.event_time, b.id
+  </select>
+
+  <select id="calendar" resultMap="calendarRow">
+    select backup_date, count(*) as backup_count
+    from backup_record
+    where backup_date between #{from} and #{to}
+    group by backup_date
+    order by backup_date
+  </select>
+
+  <select id="countAll" resultType="_long">
+    select count(*) from backup_record
+  </select>
+
+  <select id="countBySource" resultType="_long">
+    select count(*) from backup_record where kind = #{kind} and external_id = #{externalId}
+  </select>
+
+  <update id="update">
+    update backup_record
+    set database_id = #{databaseId},
+        backup_date = #{backupDate},
+        date_inferred = #{dateInferred},
+        event_time = #{eventTime},
+        status = #{status},
+        raw_data = #{rawData},
+        last_seen_at = now()
+    where kind = #{kind} and external_id = #{externalId}
+  </update>
+
+  <insert id="insert">
+    insert into backup_record(database_id, kind, external_id, backup_date, date_inferred, event_time, status, raw_data)
+    values(#{databaseId}, #{kind}, #{externalId}, #{backupDate}, #{dateInferred}, #{eventTime}, #{status}, #{rawData})
+  </insert>
+</mapper>

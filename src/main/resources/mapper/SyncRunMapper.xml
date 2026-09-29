@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.backupmanager.SyncRunMapper">
+  <resultMap id="syncRow" type="com.example.backupmanager.SyncRow">
+    <constructor>
+      <idArg column="id" javaType="_long"/>
+      <arg column="kind" javaType="java.lang.String"/>
+      <arg column="started_at" javaType="java.time.Instant"/>
+      <arg column="finished_at" javaType="java.time.Instant"/>
+      <arg column="status" javaType="java.lang.String"/>
+      <arg column="fetched_count" javaType="_int"/>
+      <arg column="saved_count" javaType="_int"/>
+      <arg column="error" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <select id="findRecent" resultMap="syncRow">
+    select * from sync_run order by started_at desc limit #{limit}
+  </select>
+
+  <insert id="insert" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    insert into sync_run(kind, status) values(#{kind}, 'started')
+  </insert>
+
+  <update id="finish">
+    update sync_run
+    set finished_at = now(), status = #{status}, fetched_count = #{fetched},
+        saved_count = #{saved}, error = #{error}
+    where id = #{id}
+  </update>
+</mapper>

@@ -1,0 +1,12 @@
+spring:
+  datasource:
+    url: jdbc:h2:file:./data/backup_manager;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE
+    username: sa
+    password: ""
+  flyway:
+    locations: classpath:db/local
+app:
+  scheduler-enabled: false
+  demo-seed: ${APP_DEMO_SEED:false}
+server:
+  address: 127.0.0.1
