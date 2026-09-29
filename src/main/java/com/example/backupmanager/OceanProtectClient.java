@@ -2,20 +2,27 @@ package com.example.backupmanager;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.UnsupportedEncodingException;
 import java.net.URI;
 import java.net.URLEncoder;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestTemplate;
+import static com.example.backupmanager.Compat.isBlank;
+import static com.example.backupmanager.Compat.listOf;
+import static com.example.backupmanager.Compat.mapOf;
 
 @Component
 class OceanProtectClient {
@@ -24,15 +31,59 @@ class OceanProtectClient {
         void accept(JsonNode copy) throws Exception;
     }
 
-    record FetchSummary(int fetched, int slaCount, int pages) {}
-    private record PageSummary(int items, int pages) {}
+    static final class FetchSummary {
+        private final int fetched;
+        private final int slaCount;
+        private final int pages;
+
+        FetchSummary(int fetched, int slaCount, int pages) {
+            this.fetched = fetched;
+            this.slaCount = slaCount;
+            this.pages = pages;
+        }
+
+        int fetched() { return fetched; }
+        int slaCount() { return slaCount; }
+        int pages() { return pages; }
+
+        @Override
+        public boolean equals(Object value) {
+            if (this == value) return true;
+            if (!(value instanceof FetchSummary)) return false;
+            FetchSummary other = (FetchSummary) value;
+            return fetched == other.fetched && slaCount == other.slaCount && pages == other.pages;
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(fetched, slaCount, pages);
+        }
+
+        @Override
+        public String toString() {
+            return "FetchSummary{fetched=" + fetched + ", slaCount=" + slaCount + ", pages=" + pages + '}';
+        }
+    }
+
+    private static final class PageSummary {
+        private final int items;
+        private final int pages;
+
+        private PageSummary(int items, int pages) {
+            this.items = items;
+            this.pages = pages;
+        }
+
+        int items() { return items; }
+        int pages() { return pages; }
+    }
     private static final class TokenSession {
         private String token;
         private TokenSession(String token) { this.token = token; }
     }
 
     private final ObjectMapper mapper;
-    private final HttpClient http;
+    private final RestTemplate http;
 
     @Value("${app.oceanprotect-base-url:}") private String baseUrl;
     @Value("${app.oceanprotect-username:}") private String username;
@@ -46,16 +97,16 @@ class OceanProtectClient {
 
     @Autowired
     OceanProtectClient(ObjectMapper mapper) {
-        this(mapper, HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build());
+        this(mapper, HttpSupport.createRestTemplate());
     }
 
-    OceanProtectClient(ObjectMapper mapper, HttpClient http) {
+    OceanProtectClient(ObjectMapper mapper, RestTemplate http) {
         this.mapper = mapper;
         this.http = http;
     }
 
     boolean configured() {
-        return !baseUrl.isBlank() && !username.isBlank() && !password.isBlank();
+        return !isBlank(baseUrl) && !isBlank(username) && !isBlank(password);
     }
 
     FetchSummary fetchCopies(CopyConsumer consumer) throws Exception {
@@ -89,13 +140,13 @@ class OceanProtectClient {
         String separator = path.contains("?") ? "&" : "?";
         for (int page = 0; page < maxPages; page++) {
             URI uri = endpoint(path + separator + "page_no=" + page + "&page_size=" + size);
-            HttpResponse<String> response = sendGet(uri, session.token);
-            if (response.statusCode() == 401 || response.statusCode() == 403) {
+            ResponseEntity<String> response = sendGet(uri, session.token);
+            if (response.getStatusCodeValue() == 401 || response.getStatusCodeValue() == 403) {
                 session.token = authenticate();
                 response = sendGet(uri, session.token);
             }
             requireSuccess(response, "查询");
-            JsonNode body = mapper.readTree(response.body());
+            JsonNode body = mapper.readTree(response.getBody());
             JsonNode items = body.path("items");
             if (!items.isArray()) throw new IllegalStateException("OceanProtect 分页响应缺少 items 数组");
             if (body.has("page_no") && body.path("page_no").asInt() != page) {
@@ -118,32 +169,29 @@ class OceanProtectClient {
     }
 
     private String authenticate() throws Exception {
-        String body = mapper.writeValueAsString(Map.of("authRequest", Map.of(
+        String body = mapper.writeValueAsString(mapOf("authRequest", mapOf(
             "userName", username,
             "password", password,
             "authType", authType,
             "userType", userType,
             "language", language
         )));
-        HttpRequest request = HttpRequest.newBuilder(endpoint("/v1/auth/token"))
-            .header("Content-Type", "application/json")
-            .header("Accept", "application/json")
-            .timeout(Duration.ofSeconds(30))
-            .POST(HttpRequest.BodyPublishers.ofString(body)).build();
-        HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setAccept(listOf(MediaType.APPLICATION_JSON));
+        ResponseEntity<String> response = http.exchange(endpoint("/v1/auth/token"), HttpMethod.POST,
+            new HttpEntity<String>(body, headers), String.class);
         requireSuccess(response, "认证");
-        String token = mapper.readTree(response.body()).path("token").asText("").trim();
+        String token = mapper.readTree(response.getBody()).path("token").asText("").trim();
         if (token.isEmpty()) throw new IllegalStateException("OceanProtect 认证响应缺少 token");
         return token;
     }
 
-    private HttpResponse<String> sendGet(URI uri, String token) throws Exception {
-        HttpRequest request = HttpRequest.newBuilder(uri)
-            .header("X-Auth-Token", token)
-            .header("Accept", "application/json")
-            .timeout(Duration.ofSeconds(90))
-            .GET().build();
-        return http.send(request, HttpResponse.BodyHandlers.ofString());
+    private ResponseEntity<String> sendGet(URI uri, String token) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("X-Auth-Token", token);
+        headers.setAccept(listOf(MediaType.APPLICATION_JSON));
+        return http.exchange(uri, HttpMethod.GET, new HttpEntity<Void>(headers), String.class);
     }
 
     private void validateConfiguration() {
@@ -157,7 +205,7 @@ class OceanProtectClient {
         if (base.getHost() == null || base.getQuery() != null || base.getFragment() != null) {
             throw new IllegalStateException("OceanProtect 地址必须是有效的服务根地址");
         }
-        if (authType.isBlank() || userType.isBlank() || language < 1 || language > 2) {
+        if (isBlank(authType) || isBlank(userType) || language < 1 || language > 2) {
             throw new IllegalStateException("OceanProtect 认证配置无效");
         }
         if (pageSize < 1 || pageSize >= 200 || slaPageSize < 1 || slaPageSize > 1000
@@ -177,12 +225,17 @@ class OceanProtectClient {
     }
 
     private static String encode(String value) {
-        return URLEncoder.encode(value, StandardCharsets.UTF_8);
+        try {
+            return URLEncoder.encode(value, StandardCharsets.UTF_8.name());
+        } catch (UnsupportedEncodingException error) {
+            throw new IllegalStateException(error);
+        }
     }
 
-    private static void requireSuccess(HttpResponse<?> response, String operation) {
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IllegalStateException("OceanProtect " + operation + "失败，HTTP " + response.statusCode());
+    private static void requireSuccess(ResponseEntity<?> response, String operation) {
+        int status = response.getStatusCodeValue();
+        if (status < 200 || status >= 300) {
+            throw new IllegalStateException("OceanProtect " + operation + "失败，HTTP " + status);
         }
     }
 }

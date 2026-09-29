@@ -11,6 +11,8 @@ import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Set;
+import static com.example.backupmanager.Compat.isBlank;
+import static com.example.backupmanager.Compat.setOf;
 
 /** Normalizes OceanProtect copies without allowing one malformed copy to abort a page. */
 final class OceanProtectParser {
@@ -27,8 +29,22 @@ final class OceanProtectParser {
         AMBIGUOUS
     }
 
-    record ParseResult(State state, String kind, String slaName,
-                       PlatformParser.Normalized normalized, String reason) {
+    static final class ParseResult {
+        private final State state;
+        private final String kind;
+        private final String slaName;
+        private final PlatformParser.Normalized normalized;
+        private final String reason;
+
+        private ParseResult(State state, String kind, String slaName,
+                            PlatformParser.Normalized normalized, String reason) {
+            this.state = state;
+            this.kind = kind;
+            this.slaName = slaName;
+            this.normalized = normalized;
+            this.reason = reason;
+        }
+
         static ParseResult parsed(String kind, String slaName, PlatformParser.Normalized normalized) {
             return new ParseResult(State.PARSED, kind, slaName, normalized, "");
         }
@@ -52,6 +68,12 @@ final class OceanProtectParser {
         boolean ambiguous() {
             return state == State.AMBIGUOUS;
         }
+
+        State state() { return state; }
+        String kind() { return kind; }
+        String slaName() { return slaName; }
+        PlatformParser.Normalized normalized() { return normalized; }
+        String reason() { return reason; }
     }
 
     /**
@@ -67,8 +89,8 @@ final class OceanProtectParser {
         String status = text(row, "status");
         String slaName = text(row, "sla_name");
         String generatedBy = text(row, "generated_by");
-        if (resourceName.isBlank() || uuid.isBlank() || timestamp.isBlank()
-                || status.isBlank() || slaName.isBlank()) {
+        if (isBlank(resourceName) || isBlank(uuid) || isBlank(timestamp)
+                || isBlank(status) || isBlank(slaName)) {
             return ParseResult.ignored(
                 "copy is missing resource_name, uuid, display_timestamp, status, or sla_name");
         }
@@ -118,28 +140,28 @@ final class OceanProtectParser {
      */
     static Set<String> kindsFromSla(JsonNode sla, ObjectMapper mapper) {
         SlaKinds analysis = analyzeSla(sla, mapper);
-        return analysis.valid() ? analysis.kinds() : Set.of();
+        return analysis.valid() ? analysis.kinds() : setOf();
     }
 
     private static SlaKinds analyzeSla(JsonNode source, ObjectMapper mapper) {
         if (source == null || source.isNull() || source.isMissingNode()) {
-            return new SlaKinds(false, Set.of(), 0);
+            return new SlaKinds(false, setOf(), 0);
         }
 
         JsonNode sla = source;
         try {
             if (sla.isTextual()) {
                 String json = sla.asText().trim();
-                if (json.isEmpty()) return new SlaKinds(false, Set.of(), 0);
+                if (json.isEmpty()) return new SlaKinds(false, setOf(), 0);
                 sla = mapper.readTree(json);
             }
         } catch (Exception error) {
-            return new SlaKinds(false, Set.of(), 0);
+            return new SlaKinds(false, setOf(), 0);
         }
-        if (sla == null || !sla.isObject()) return new SlaKinds(false, Set.of(), 0);
+        if (sla == null || !sla.isObject()) return new SlaKinds(false, setOf(), 0);
 
         JsonNode policies = sla.get("policy_list");
-        if (policies == null || !policies.isArray()) return new SlaKinds(false, Set.of(), 0);
+        if (policies == null || !policies.isArray()) return new SlaKinds(false, setOf(), 0);
 
         Set<String> kinds = new LinkedHashSet<>();
         int backupScheduleCount = 0;
@@ -158,7 +180,7 @@ final class OceanProtectParser {
     private static boolean isBackupPolicy(JsonNode policy) {
         if (policy == null || !policy.isObject()) return false;
         String type = text(policy, "type");
-        if (!type.isBlank() && !type.equalsIgnoreCase("backup")) return false;
+        if (!isBlank(type) && !type.equalsIgnoreCase("backup")) return false;
         String action = text(policy, "action");
         return !action.equalsIgnoreCase("replication") && !action.equalsIgnoreCase("archiving");
     }
@@ -192,5 +214,19 @@ final class OceanProtectParser {
         return LocalDateTime.parse(normalized).atZone(ZONE).toInstant();
     }
 
-    private record SlaKinds(boolean valid, Set<String> kinds, int backupScheduleCount) {}
+    private static final class SlaKinds {
+        private final boolean valid;
+        private final Set<String> kinds;
+        private final int backupScheduleCount;
+
+        private SlaKinds(boolean valid, Set<String> kinds, int backupScheduleCount) {
+            this.valid = valid;
+            this.kinds = kinds;
+            this.backupScheduleCount = backupScheduleCount;
+        }
+
+        boolean valid() { return valid; }
+        Set<String> kinds() { return kinds; }
+        int backupScheduleCount() { return backupScheduleCount; }
+    }
 }

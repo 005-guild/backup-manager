@@ -33,7 +33,7 @@ $taskJava = if ($taskJavaHome) {
     (Get-Command java -ErrorAction Stop).Source
 }
 if (-not (Test-Path -LiteralPath $taskJava)) {
-    throw 'Java was not found. Install Java 21 and configure JAVA_HOME or PATH.'
+    throw 'Java was not found. Install JDK 8 and configure JAVA_HOME or PATH.'
 }
 $taskJar = Get-ChildItem -LiteralPath (Join-Path $taskProject 'target') -Filter 'backup-manager-*.jar' -File |
     Where-Object { $_.Name -notlike '*.original' } |

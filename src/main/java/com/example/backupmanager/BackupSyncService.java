@@ -3,10 +3,6 @@ package com.example.backupmanager;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -15,8 +11,17 @@ import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
+import static com.example.backupmanager.Compat.isBlank;
+import static com.example.backupmanager.Compat.listOf;
+import static com.example.backupmanager.Compat.mapOf;
 
 @Service
 public class BackupSyncService {
@@ -24,7 +29,7 @@ public class BackupSyncService {
     private final CatalogRepository catalog;
     private final ObjectMapper mapper;
     private final OceanProtectClient oceanProtect;
-    private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+    private final RestTemplate http = HttpSupport.createRestTemplate();
     @Value("${app.daily-url:}") private String dailyUrl;
     @Value("${app.daily-token:}") private String dailyToken;
     @Value("${app.daily-data-path:}") private String dataPath;
@@ -39,7 +44,7 @@ public class BackupSyncService {
     }
 
     public synchronized Map<String, Object> syncDaily() {
-        if (dailyUrl.isBlank() || dailyToken.isBlank()) throw new IllegalStateException("日备接口地址或令牌尚未配置");
+        if (isBlank(dailyUrl) || isBlank(dailyToken)) throw new IllegalStateException("日备接口地址或令牌尚未配置");
         if (!dailyUrl.startsWith("https://") && !dailyUrl.startsWith("http://")) throw new IllegalStateException("接口地址无效");
         if (pageSize < 1 || pageSize > 20000 || maxPages < 1 || maxPages > 1000) throw new IllegalStateException("分页配置无效");
         long runId = catalog.startSync("daily");
@@ -47,18 +52,19 @@ public class BackupSyncService {
         Set<String> signatures = new HashSet<>();
         try {
             for (int page = 1; page <= maxPages; page++) {
-                String body = mapper.writeValueAsString(Map.of("pageIndex", page, "pageSize", pageSize, "customParams", Map.of()));
-                HttpRequest request = HttpRequest.newBuilder(URI.create(dailyUrl))
-                    .header("Authorization", "Bearer " + dailyToken)
-                    .header("Content-Type", "application/json")
-                    .timeout(Duration.ofSeconds(90))
-                    .POST(HttpRequest.BodyPublishers.ofString(body)).build();
-                HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
-                if (response.statusCode() < 200 || response.statusCode() >= 300) throw new IllegalStateException("平台返回 HTTP " + response.statusCode());
-                JsonNode list = PlatformParser.rows(mapper.readTree(response.body()), dataPath);
+                String body = mapper.writeValueAsString(mapOf("pageIndex", page, "pageSize", pageSize, "customParams", mapOf()));
+                HttpHeaders headers = new HttpHeaders();
+                headers.set("Authorization", "Bearer " + dailyToken);
+                headers.setContentType(MediaType.APPLICATION_JSON);
+                headers.setAccept(listOf(MediaType.APPLICATION_JSON));
+                ResponseEntity<String> response = http.exchange(URI.create(dailyUrl), HttpMethod.POST,
+                    new HttpEntity<String>(body, headers), String.class);
+                int status = response.getStatusCodeValue();
+                if (status < 200 || status >= 300) throw new IllegalStateException("平台返回 HTTP " + status);
+                JsonNode list = PlatformParser.rows(mapper.readTree(response.getBody()), dataPath);
                 if (list.isEmpty()) {
                     catalog.finishSync(runId, "success", fetched, saved, "");
-                    return Map.of("fetched", fetched, "saved", saved);
+                    return mapOf("fetched", fetched, "saved", saved);
                 }
                 String signature = list.size() + ":" + list.get(0).toString() + ":" + list.get(list.size() - 1).toString();
                 if (!signatures.add(signature)) throw new IllegalStateException("接口分页返回重复数据，请检查 pageIndex");
@@ -119,7 +125,7 @@ public class BackupSyncService {
             });
             catalog.finishSync(monthlyRunId, "success", matched[0], saved[0], syncNote(ignored[0], ambiguous[0]));
             catalog.finishSync(yearlyRunId, "success", matched[1], saved[1], syncNote(ignored[0], ambiguous[0]));
-            return Map.of(
+            return mapOf(
                 "fetched", summary.fetched(),
                 "slaCount", summary.slaCount(),
                 "pages", summary.pages(),
@@ -145,7 +151,7 @@ public class BackupSyncService {
     @Scheduled(cron = "${app.sync-cron:0 0 6 * * *}", zone = "Asia/Shanghai")
     public void scheduledSync() {
         if (!schedulerEnabled) return;
-        if (!dailyUrl.isBlank() && !dailyToken.isBlank()) {
+        if (!isBlank(dailyUrl) && !isBlank(dailyToken)) {
             try { syncDaily(); }
             catch (Exception error) { log.error("Daily backup sync failed: {}", error.getMessage()); }
         }

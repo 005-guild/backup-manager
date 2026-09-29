@@ -1,5 +1,6 @@
 package com.example.backupmanager;
 
+import static com.example.backupmanager.Compat.listOf;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -10,6 +11,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -50,25 +52,25 @@ class MyBatisPersistenceTests {
         List<BackupRow> filtered = catalog.backups(created.id(), LocalDate.of(2026, 9, 1),
             LocalDate.of(2026, 9, 1), "daily", "SUCCESSed", 10, 0);
         assertEquals(1, filtered.size());
-        assertEquals("successed", filtered.getFirst().status());
+        assertEquals("successed", filtered.get(0).status());
 
         catalog.upsertBackup(created.id(), "daily", "MYBATIS:1", LocalDate.of(2026, 9, 1),
             false, firstEvent.plusSeconds(60), "cancel", "{\"source\":\"updated\"}");
         assertEquals(1, catalog.backupCount());
-        assertEquals("cancel", catalog.backups(created.id(), null, null, "", "", 10, 0).getFirst().status());
+        assertEquals("cancel", catalog.backups(created.id(), null, null, "", "", 10, 0).get(0).status());
 
         DatabaseRow summarized = catalog.database(created.id());
         assertEquals(1, summarized.backupCount());
         assertNotNull(summarized.latestEvent());
         List<Map<String, Object>> calendar = catalog.calendar(LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 30));
         assertEquals(1, calendar.size());
-        assertEquals(LocalDate.of(2026, 9, 1), calendar.getFirst().get("backup_date"));
-        assertEquals(1L, ((Number) calendar.getFirst().get("backup_count")).longValue());
+        assertEquals(LocalDate.of(2026, 9, 1), calendar.get(0).get("backup_date"));
+        assertEquals(1L, ((Number) calendar.get(0).get("backup_count")).longValue());
 
         long runId = catalog.startSync("daily");
         assertTrue(runId > 0);
         catalog.finishSync(runId, "success", 1, 1, "");
-        assertEquals("success", catalog.syncRuns(1).getFirst().status());
+        assertEquals("success", catalog.syncRuns(1).get(0).status());
 
         catalog.addUser("mybatis_viewer", "{noop}test-password", "VIEWER");
         UserAccount account = users.findAccount("mybatis_viewer");
@@ -77,7 +79,7 @@ class MyBatisPersistenceTests {
         assertTrue(account.enabled());
         assertFalse(catalog.users().isEmpty());
 
-        assertEquals(List.of("daily", "monthly", "yearly"),
-            catalog.rules().stream().map(RuleRow::kind).toList());
+        assertEquals(listOf("daily", "monthly", "yearly"),
+            catalog.rules().stream().map(RuleRow::kind).collect(Collectors.toList()));
     }
 }

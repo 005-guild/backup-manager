@@ -11,15 +11,15 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 public class ApiErrors {
     @ExceptionHandler(IllegalArgumentException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)
-    Map<String, String> invalid(IllegalArgumentException error) { return Map.of("error", error.getMessage()); }
+    Map<String, String> invalid(IllegalArgumentException error) { return Compat.mapOf("error", error.getMessage()); }
 
     @ExceptionHandler(DataIntegrityViolationException.class)
     @ResponseStatus(HttpStatus.CONFLICT)
-    Map<String, String> conflict() { return Map.of("error", "记录已存在或违反约束"); }
+    Map<String, String> conflict() { return Compat.mapOf("error", "记录已存在或违反约束"); }
 
     @ExceptionHandler(IllegalStateException.class)
     @ResponseStatus(HttpStatus.SERVICE_UNAVAILABLE)
     Map<String, String> unavailable(IllegalStateException error) {
-        return Map.of("error", error.getMessage() == null ? "外部备份平台暂时不可用" : error.getMessage());
+        return Compat.mapOf("error", error.getMessage() == null ? "外部备份平台暂时不可用" : error.getMessage());
     }
 }

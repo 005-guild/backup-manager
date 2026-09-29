@@ -1,6 +1,6 @@
 # 数据库备份管理（Spring Boot + MyBatis + React）
 
-后端为 Java 21 / Spring Boot，前端为 React。PostgreSQL 存储备份元数据与登录会话，Docker Compose 提供单台虚拟机部署；Web 后端可横向扩展，调度器保持一个实例。
+后端为 JDK 8 / Spring Boot 2.7，前端为 React。PostgreSQL 存储备份元数据与登录会话，Docker Compose 提供单台虚拟机部署；Web 后端可横向扩展，调度器保持一个实例。
 
 ## 整体架构
 
@@ -56,7 +56,7 @@ src/test/java/com/example/backupmanager/
 
 ## 在 VS Code 中运行
 
-前置环境为 Java 21、Node.js 20.19+ 和 pnpm；请通过 `JAVA_HOME` 或 `PATH` 提供 Java，通过 `PATH` 提供 pnpm。仓库自带 Maven Wrapper，不要求单独安装 Maven。项目可以克隆到任意目录。Windows 版 VS Code 可直接使用仓库中的任务；其他系统可按照“本地开发”一节运行对应命令。
+前置环境为 JDK 8、Node.js 20.19+ 和 pnpm；请通过 `JAVA_HOME` 或 `PATH` 提供 JDK，通过 `PATH` 提供 pnpm。仓库自带 Maven Wrapper，不要求单独安装 Maven。项目可以克隆到任意目录。Windows 版 VS Code 可直接使用仓库中的任务；其他系统可按照“本地开发”一节运行对应命令。
 
 在 VS Code 中运行任务（菜单“终端”→“运行任务”）：先运行“1. 构建后端”，再分别运行“2. 启动后端（本地数据库）”和“3. 启动前端”。打开 `http://127.0.0.1:5173/`。首次管理员用户名为 `admin`，随机生成的密码保存在项目根目录的 `.local-credentials` 文件中。该文件和本地数据库 `data/` 已加入忽略列表，请勿提交到仓库。
 
@@ -83,6 +83,8 @@ src/test/java/com/example/backupmanager/
 
 ## Docker 启动
 
+Docker 部署使用 JDK 8、Spring Boot 2.7 和 PostgreSQL 14。若现有 `postgres_data` 数据卷曾由 PostgreSQL 17 创建，不能直接挂载给 PostgreSQL 14；PostgreSQL 不支持数据目录原地降级。请先在 PostgreSQL 17 环境中使用 `pg_dump` 完成逻辑备份，再创建新的 PostgreSQL 14 数据卷并使用 `pg_restore` 恢复。确认备份可用前不要删除原数据卷。
+
 1. 将 `.env.example` 复制为 `.env`。设置强 `DB_PASSWORD`、`BOOTSTRAP_ADMIN_PASSWORD`、日备平台配置，以及 OceanProtect 地址、用户名和密码。不要把 `.env` 提交到代码仓库。
 2. 执行 `docker compose up -d --build`。浏览器打开 `http://服务器:8080`，用 `.env` 中的管理员账号登录。
 3. 首次管理员建立后，可从 `.env` 删除 `BOOTSTRAP_ADMIN_PASSWORD` 并重启服务；其他用户在“用户”页创建。
@@ -92,10 +94,49 @@ src/test/java/com/example/backupmanager/
 
 ## 本地开发
 
-- 后端：Java 21。直接运行 `./mvnw spring-boot:run` 时默认连接 PostgreSQL，需要配置 `DB_URL`、`DB_USER`、`DB_PASSWORD` 和首次管理员环境变量；Windows 本地演示可使用 VS Code 任务或 `scripts/run-local-backend.ps1`，它会启用 `local` 配置并连接项目 `data/` 下的 H2 文件数据库。
+- 后端：JDK 8 / Spring Boot 2.7。直接运行 `./mvnw spring-boot:run` 时默认连接 PostgreSQL，需要配置 `DB_URL`、`DB_USER`、`DB_PASSWORD` 和首次管理员环境变量；Windows 本地演示可使用 VS Code 任务或 `scripts/run-local-backend.ps1`，它会启用 `local` 配置并连接项目 `data/` 下的 H2 文件数据库。
 - 前端：Node 20.19+，进入 `frontend`，运行 `pnpm install` 和 `pnpm dev`。开发服务器会把 `/api` 转发给 `localhost:8080`。
 - 后端测试：运行 `./mvnw test`。`MyBatisPersistenceTests` 使用内存 H2 的 PostgreSQL 兼容模式；OceanProtect 测试使用本机模拟 HTTP 服务验证认证、SLA/副本分页、令牌刷新、字段解析和月年备入库；其他测试验证规则判断和日备平台解析。
 - 后端完整构建：Windows 运行 `scripts/build-backend.ps1`，其他系统运行 `./mvnw package`；Maven 会在打包前执行测试。前端构建：进入 `frontend` 后运行 `pnpm build`。
+
+### 旧本地 H2 数据的一次性迁移
+
+`scripts/migrate-local-h2-2.3-to-2.2.ps1` 只用于把**曾由 H2 2.3.232 打开的旧本地文件库**迁移到本项目使用的 H2 2.2.224。新建的 H2 2.2.224 数据库、已经迁移过的数据库和 PostgreSQL 都不应运行该脚本。运行前先退出后端和所有 H2 工具，并确认 `data/backup_manager.mv.db` 的来源版本确实为 2.3.232。
+
+迁移脚本先用 H2 2.3.232 完整导出 SQL，在创建新库前生成带毫秒时间戳且不会覆盖旧文件的原库备份，然后用 H2 2.2.224 创建新库并重新打开校验。Spring Boot 3 与 Spring Boot 2.7 的登录会话序列化格式不兼容，因此脚本会在目标库中通过事务仅清空 `SPRING_SESSION_ATTRIBUTES` 和 `SPRING_SESSION`，迁移完成后所有用户需要重新登录；用户、数据库和备份等业务数据不会被清理。导出、备份、导入、会话清理或校验任一步失败时，脚本会删除未完成的新库并自动放回原文件。时间戳备份会保留在原数据库目录中，例如 `data/backup_manager.before-h2-2.2.224.20260929-120000000.mv.db`；确认应用和数据正常前不要删除它。
+
+H2 2.3.232 需要 Java 11 或更高版本完成导出，H2 2.2.224 导入端可使用项目的 JDK 8。脚本会依次从环境变量、项目附近的 JDK/Maven 仓库和用户 Maven 仓库查找 Java 与两个 H2 jar；找不到时可传入绝对路径。默认数据库是项目中的 `data/backup_manager`：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\migrate-local-h2-2.3-to-2.2.ps1 -ConfirmLegacyH2
+```
+
+需要显式指定工具或数据库时，所有路径参数都必须是绝对路径；`DatabaseBasePath` 可以传不带后缀的数据库基路径，也可以传 `.mv.db` 文件：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\migrate-local-h2-2.3-to-2.2.ps1 `
+  -ConfirmLegacyH2 `
+  -DatabaseBasePath 'D:\Vscode\backup-manager\data\backup_manager' `
+  -SourceH2Jar 'C:\Users\me\.m2\repository\com\h2database\h2\2.3.232\h2-2.3.232.jar' `
+  -TargetH2Jar 'C:\Users\me\.m2\repository\com\h2database\h2\2.2.224\h2-2.2.224.jar' `
+  -SourceJavaPath 'C:\Program Files\Eclipse Adoptium\jdk-21\bin\java.exe' `
+  -TargetJavaPath 'C:\Program Files\Eclipse Adoptium\jdk-8\bin\java.exe'
+```
+
+VS Code 的 Java Language Server 可以使用较新的 JDK；这只是编辑器自身的运行环境。项目仍由 `pom.xml` 的 `java.version=1.8`、`JavaSE-1.8` 项目运行时以及 `BACKUP_MANAGER_JAVA_HOME` 指向的 JDK 8 编译和启动。Windows 可在本机未提交的 `.vscode/settings.json` 中分别配置：
+
+```json
+{
+  "java.jdt.ls.java.home": "C:\\path\\to\\jdk-21",
+  "java.configuration.runtimes": [
+    {
+      "name": "JavaSE-1.8",
+      "path": "C:\\path\\to\\jdk-8",
+      "default": true
+    }
+  ]
+}
+```
 
 增加或修改持久化功能时，先修改对应的 `*Mapper.java` 方法签名和 `mapper/*Mapper.xml` SQL；如果表结构发生变化，再分别为正式库和本地库新增同版本号的 Flyway 迁移。不要直接改已经执行过的历史迁移脚本，否则已部署数据库会出现校验不一致。
 

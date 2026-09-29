@@ -7,6 +7,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -41,7 +42,7 @@ public class ApiController {
     @GetMapping("/dashboard")
     Map<String, Object> dashboard() {
         LocalDate today = today();
-        List<DatabaseRow> databases = catalog.databases("").stream().filter(DatabaseRow::active).toList();
+        List<DatabaseRow> databases = catalog.databases("").stream().filter(DatabaseRow::active).collect(Collectors.toList());
         List<Map<String, Object>> rows = new ArrayList<>();
         int missing = 0, pending = 0, unknown = 0;
         for (DatabaseRow database : databases) {
@@ -51,14 +52,14 @@ public class ApiController {
             long dbUnknown = checks.stream().filter(c -> c.state().equals("unknown")).count();
             missing += dbMissing; pending += dbPending; unknown += dbUnknown;
             List<BackupRow> latest = catalog.backups(database.id(), null, null, "", "", 1, 0);
-            rows.add(Map.of("database", database, "latest", latest.isEmpty() ? Map.of() : latest.get(0),
+            rows.add(Compat.mapOf("database", database, "latest", latest.isEmpty() ? Compat.mapOf() : latest.get(0),
                 "missing", dbMissing, "pending", dbPending, "unknown", dbUnknown));
         }
         rows.sort((a,b) -> Long.compare((Long)b.get("missing"), (Long)a.get("missing")));
         List<SyncRow> runs = catalog.syncRuns(1);
-        return Map.of("databaseCount", databases.size(), "backupCount", catalog.backupCount(),
+        return Compat.mapOf("databaseCount", databases.size(), "backupCount", catalog.backupCount(),
             "missing", missing, "pending", pending, "unknown", unknown,
-            "databases", rows, "lastSync", runs.isEmpty() ? Map.of() : runs.get(0));
+            "databases", rows, "lastSync", runs.isEmpty() ? Compat.mapOf() : runs.get(0));
     }
 
     @GetMapping("/databases") List<DatabaseRow> databases(@RequestParam(defaultValue = "") String q) { return catalog.databases(q.trim()); }
@@ -66,12 +67,20 @@ public class ApiController {
     @GetMapping("/databases/{id}/coverage") List<CoverageGroup> coverage(@PathVariable long id) {
         return coverage.coverage(requireDatabase(id));
     }
-    record AddDatabase(String name, LocalDate monitorFrom) {}
+    public static class AddDatabase {
+        private String name;
+        private LocalDate monitorFrom;
+
+        public String getName() { return name; }
+        public void setName(String name) { this.name = name; }
+        public LocalDate getMonitorFrom() { return monitorFrom; }
+        public void setMonitorFrom(LocalDate monitorFrom) { this.monitorFrom = monitorFrom; }
+    }
     @PostMapping("/admin/databases")
     @ResponseStatus(HttpStatus.CREATED)
     DatabaseRow addDatabase(@RequestBody AddDatabase input) {
-        if (input.name() == null || input.name().isBlank() || input.name().length() > 255) throw new IllegalArgumentException("请输入有效的数据库名称");
-        return catalog.addDatabase(input.name().trim(), input.monitorFrom() == null ? today() : input.monitorFrom());
+        if (Compat.isBlank(input.getName()) || input.getName().length() > 255) throw new IllegalArgumentException("请输入有效的数据库名称");
+        return catalog.addDatabase(input.getName().trim(), input.getMonitorFrom() == null ? today() : input.getMonitorFrom());
     }
     @PutMapping("/admin/databases/{id}/metadata")
     DatabaseRow updateDatabaseMetadata(@PathVariable long id, @RequestBody DatabaseMetadata input) {
@@ -97,12 +106,12 @@ public class ApiController {
                                 @RequestParam(defaultValue = "0") int page,
                                 @RequestParam(defaultValue = "50") int size) {
         if (page < 0 || page > 100000 || size < 1 || size > 200) throw new IllegalArgumentException("分页参数无效");
-        if (!kind.isEmpty() && !List.of("daily","monthly","yearly").contains(kind)) throw new IllegalArgumentException("备份类型无效");
+        if (!kind.isEmpty() && !Compat.listOf("daily","monthly","yearly").contains(kind)) throw new IllegalArgumentException("备份类型无效");
         if (date != null) { from = date; to = date; }
         if (from != null && to != null && from.isAfter(to)) throw new IllegalArgumentException("日期范围无效");
         List<BackupRow> found = catalog.backups(databaseId, from, to, kind, status, size + 1, page * size);
         boolean more = found.size() > size;
-        return Map.of("items", more ? found.subList(0, size) : found, "hasMore", more, "page", page);
+        return Compat.mapOf("items", more ? found.subList(0, size) : found, "hasMore", more, "page", page);
     }
 
     @GetMapping("/calendar")
@@ -110,18 +119,31 @@ public class ApiController {
         if (year < 2000 || year > 2100 || month < 1 || month > 12) throw new IllegalArgumentException("月份无效");
         YearMonth period = YearMonth.of(year, month);
         List<Map<String, Object>> days = catalog.calendar(period.atDay(1), period.atEndOfMonth()).stream()
-            .map(row -> Map.<String, Object>of("day", row.get("backup_date").toString(), "count", row.get("backup_count"))).toList();
-        return Map.of("year", year, "month", month, "days", days);
+            .map(row -> Compat.<String, Object>mapOf("day", row.get("backup_date").toString(), "count", row.get("backup_count")))
+            .collect(Collectors.toList());
+        return Compat.mapOf("year", year, "month", month, "days", days);
     }
     @GetMapping("/rules") List<RuleRow> rules() { return catalog.rules(); }
-    record UpdateRule(boolean enabled, int graceDays, Integer retentionDays) {}
+    public static class UpdateRule {
+        private boolean enabled;
+        private int graceDays;
+        private Integer retentionDays;
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public int getGraceDays() { return graceDays; }
+        public void setGraceDays(int graceDays) { this.graceDays = graceDays; }
+        public Integer getRetentionDays() { return retentionDays; }
+        public void setRetentionDays(Integer retentionDays) { this.retentionDays = retentionDays; }
+    }
     @PutMapping("/admin/rules/{id}")
     RuleRow updateRule(@PathVariable long id, @RequestBody UpdateRule input) {
         RuleRow rule = catalog.rules().stream().filter(r -> r.id() == id).findFirst()
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "规则不存在"));
-        if (input.graceDays() < 0 || input.graceDays() > 30 || (input.retentionDays() != null && (input.retentionDays() < 1 || input.retentionDays() > 36500))) throw new IllegalArgumentException("规则数值无效");
-        catalog.updateRule(id, input.enabled(), input.graceDays(), input.retentionDays());
-        return catalog.rules().stream().filter(r -> r.id() == id).findFirst().orElseThrow();
+        if (input.getGraceDays() < 0 || input.getGraceDays() > 30 || (input.getRetentionDays() != null && (input.getRetentionDays() < 1 || input.getRetentionDays() > 36500))) throw new IllegalArgumentException("规则数值无效");
+        catalog.updateRule(id, input.isEnabled(), input.getGraceDays(), input.getRetentionDays());
+        return catalog.rules().stream().filter(r -> r.id() == id).findFirst()
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "规则不存在"));
     }
 
     @GetMapping("/checks")
@@ -134,14 +156,25 @@ public class ApiController {
     @PostMapping("/admin/sync/daily") Map<String, Object> syncDaily() { return sync.syncDaily(); }
     @PostMapping("/admin/sync/oceanprotect") Map<String, Object> syncOceanProtect() { return sync.syncOceanProtect(); }
     @GetMapping("/admin/users") List<Map<String, Object>> users() { return catalog.users(); }
-    record AddUser(String username, String password, String role) {}
+    public static class AddUser {
+        private String username;
+        private String password;
+        private String role;
+
+        public String getUsername() { return username; }
+        public void setUsername(String username) { this.username = username; }
+        public String getPassword() { return password; }
+        public void setPassword(String password) { this.password = password; }
+        public String getRole() { return role; }
+        public void setRole(String role) { this.role = role; }
+    }
     @PostMapping("/admin/users")
     @ResponseStatus(HttpStatus.CREATED)
     Map<String, String> addUser(@RequestBody AddUser input) {
-        if (input.username() == null || !input.username().matches("[A-Za-z0-9_.-]{3,100}")) throw new IllegalArgumentException("用户名需为 3-100 位字母、数字、点、横线或下划线");
-        if (input.password() == null || input.password().length() < 12) throw new IllegalArgumentException("密码至少 12 位");
-        if (input.role() == null || !List.of("ADMIN", "VIEWER").contains(input.role())) throw new IllegalArgumentException("角色无效");
-        catalog.addUser(input.username(), encoder.encode(input.password()), input.role());
-        return Map.of("username", input.username(), "role", input.role());
+        if (input.getUsername() == null || !input.getUsername().matches("[A-Za-z0-9_.-]{3,100}")) throw new IllegalArgumentException("用户名需为 3-100 位字母、数字、点、横线或下划线");
+        if (input.getPassword() == null || input.getPassword().length() < 12) throw new IllegalArgumentException("密码至少 12 位");
+        if (input.getRole() == null || !Compat.listOf("ADMIN", "VIEWER").contains(input.getRole())) throw new IllegalArgumentException("角色无效");
+        catalog.addUser(input.getUsername(), encoder.encode(input.getPassword()), input.getRole());
+        return Compat.mapOf("username", input.getUsername(), "role", input.getRole());
     }
 }

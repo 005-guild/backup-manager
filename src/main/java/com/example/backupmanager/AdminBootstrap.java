@@ -15,7 +15,7 @@ public class AdminBootstrap {
             @Value("${app.admin-password:}") String password) {
         return args -> {
             if (users.countAll() > 0) return;
-            if (username.isBlank() || password.length() < 12 || password.startsWith("replace-")) {
+            if (Compat.isBlank(username) || password.length() < 12 || password.startsWith("replace-")) {
                 throw new IllegalStateException("Set BOOTSTRAP_ADMIN_USER and a private BOOTSTRAP_ADMIN_PASSWORD of at least 12 characters");
             }
             try {

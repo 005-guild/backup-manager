@@ -4,6 +4,7 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -31,13 +32,22 @@ public class RuleService {
             if (CoverageService.isDue(rule.kind(), due)) dueDates.add(due);
         }
         return CoverageService.evaluate(rule, dueDates, today, true, records).stream().map(slot -> {
-            String state = switch (slot.state()) {
-                case "failed" -> "missing";
-                case "running" -> "pending";
-                case "unverified" -> "unknown";
-                default -> slot.state();
-            };
+            String state;
+            switch (slot.state()) {
+                case "failed":
+                    state = "missing";
+                    break;
+                case "running":
+                    state = "pending";
+                    break;
+                case "unverified":
+                    state = "unknown";
+                    break;
+                default:
+                    state = slot.state();
+                    break;
+            }
             return new CheckRow(slot.due(), rule.kind(), state, slot.record());
-        }).toList();
+        }).collect(Collectors.toList());
     }
 }

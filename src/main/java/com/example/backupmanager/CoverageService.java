@@ -4,10 +4,12 @@ import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -25,7 +27,7 @@ public class CoverageService {
             List<LocalDate> dueDates = dueDates(rule, database, today);
             boolean sourceConnected = rule.enabled() || database.name().startsWith("DEMO_");
             if (dueDates.isEmpty()) {
-                groups.add(new CoverageGroup(rule.kind(), sourceConnected, rule.retentionDays(), rule.graceDays(), 0, 0, 0, 0, 0, List.of()));
+                groups.add(new CoverageGroup(rule.kind(), sourceConnected, rule.retentionDays(), rule.graceDays(), 0, 0, 0, 0, 0, Collections.emptyList()));
                 continue;
             }
             LocalDate first = dueDates.get(0);
@@ -35,10 +37,20 @@ public class CoverageService {
             int present = 0, missing = 0, pending = 0, unknown = 0;
             for (CoverageSlot slot : slots) {
                 switch (slot.state()) {
-                    case "ok" -> present++;
-                    case "missing", "failed" -> missing++;
-                    case "pending", "running" -> pending++;
-                    default -> unknown++;
+                    case "ok":
+                        present++;
+                        break;
+                    case "missing":
+                    case "failed":
+                        missing++;
+                        break;
+                    case "pending":
+                    case "running":
+                        pending++;
+                        break;
+                    default:
+                        unknown++;
+                        break;
                 }
             }
             groups.add(new CoverageGroup(rule.kind(), sourceConnected, rule.retentionDays(), rule.graceDays(), slots.size(), present, missing, pending, unknown, slots));
@@ -60,7 +72,7 @@ public class CoverageService {
                 // A dated backup belongs to its own scheduled day. Never borrow tomorrow's
                 // daily backup to hide today's gap; monthly/yearly off-schedule dates may be late completions.
                 .filter(record -> record.backupDate().equals(due) || !isDue(rule.kind(), record.backupDate()))
-                .toList();
+                .collect(Collectors.toList());
             BackupRow evidence = candidates.stream()
                 .filter(record -> record.status().equalsIgnoreCase("successed") && !record.dateInferred())
                 .min(byDate).orElse(null);
@@ -90,12 +102,16 @@ public class CoverageService {
     }
 
     static boolean isDue(String kind, LocalDate date) {
-        return switch (kind) {
-            case "daily" -> true;
-            case "monthly" -> date.getDayOfMonth() == 1;
-            case "yearly" -> date.getMonthValue() == 12 && date.getDayOfMonth() == 31;
-            default -> false;
-        };
+        switch (kind) {
+            case "daily":
+                return true;
+            case "monthly":
+                return date.getDayOfMonth() == 1;
+            case "yearly":
+                return date.getMonthValue() == 12 && date.getDayOfMonth() == 31;
+            default:
+                return false;
+        }
     }
 
     static List<LocalDate> dueDates(RuleRow rule, DatabaseRow database, LocalDate today) {
@@ -108,21 +124,25 @@ public class CoverageService {
         }
         if (start.isAfter(today)) return dates;
         switch (rule.kind()) {
-            case "daily" -> {
+            case "daily": {
                 for (LocalDate due = start; !due.isAfter(today); due = due.plusDays(1)) dates.add(due);
+                break;
             }
-            case "monthly" -> {
+            case "monthly": {
                 LocalDate due = YearMonth.from(start).atDay(1);
                 if (due.isBefore(start)) due = due.plusMonths(1);
                 for (; !due.isAfter(today); due = due.plusMonths(1)) dates.add(due);
+                break;
             }
-            case "yearly" -> {
+            case "yearly": {
                 for (int year = start.getYear(); year <= today.getYear(); year++) {
                     LocalDate due = LocalDate.of(year, 12, 31);
                     if (!due.isBefore(start) && !due.isAfter(today)) dates.add(due);
                 }
+                break;
             }
-            default -> { }
+            default:
+                break;
         }
         return dates;
     }

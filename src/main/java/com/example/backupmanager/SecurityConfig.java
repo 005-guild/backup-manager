@@ -36,23 +36,23 @@ public class SecurityConfig {
     @Bean
     SecurityFilterChain filterChain(HttpSecurity http, ObjectMapper mapper) throws Exception {
         http.authorizeHttpRequests(auth -> auth
-            .requestMatchers("/actuator/health", "/api/auth/csrf", "/api/auth/login").permitAll()
-            .requestMatchers("/api/admin/**").hasRole("ADMIN")
-            .requestMatchers("/api/**").authenticated()
+            .antMatchers("/actuator/health", "/api/auth/csrf", "/api/auth/login").permitAll()
+            .antMatchers("/api/admin/**").hasRole("ADMIN")
+            .antMatchers("/api/**").authenticated()
             .anyRequest().denyAll());
         http.csrf(csrf -> csrf.csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse()));
         http.formLogin(form -> form.loginProcessingUrl("/api/auth/login")
-            .successHandler((request, response, authentication) -> writeJson(response, mapper, 200, Map.of("username", authentication.getName(), "admin", authentication.getAuthorities().stream().anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN")))))
-            .failureHandler((request, response, error) -> writeJson(response, mapper, 401, Map.of("error", "用户名或密码错误"))));
+            .successHandler((request, response, authentication) -> writeJson(response, mapper, 200, Compat.mapOf("username", authentication.getName(), "admin", authentication.getAuthorities().stream().anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN")))))
+            .failureHandler((request, response, error) -> writeJson(response, mapper, 401, Compat.mapOf("error", "用户名或密码错误"))));
         http.logout(logout -> logout.logoutUrl("/api/auth/logout")
-            .logoutSuccessHandler((request, response, authentication) -> writeJson(response, mapper, 200, Map.of("ok", true))));
+            .logoutSuccessHandler((request, response, authentication) -> writeJson(response, mapper, 200, Compat.mapOf("ok", true))));
         http.exceptionHandling(errors -> errors
-            .authenticationEntryPoint((request, response, exception) -> writeJson(response, mapper, 401, Map.of("error", "请先登录")))
-            .accessDeniedHandler((request, response, exception) -> writeJson(response, mapper, 403, Map.of("error", "没有权限"))));
+            .authenticationEntryPoint((request, response, exception) -> writeJson(response, mapper, 401, Compat.mapOf("error", "请先登录")))
+            .accessDeniedHandler((request, response, exception) -> writeJson(response, mapper, 403, Compat.mapOf("error", "没有权限"))));
         return http.build();
     }
 
-    private static void writeJson(jakarta.servlet.http.HttpServletResponse response, ObjectMapper mapper, int status, Object value) throws IOException {
+    private static void writeJson(javax.servlet.http.HttpServletResponse response, ObjectMapper mapper, int status, Object value) throws IOException {
         response.setStatus(status);
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         response.setCharacterEncoding("UTF-8");

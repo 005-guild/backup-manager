@@ -1,5 +1,7 @@
 package com.example.backupmanager;
 
+import static com.example.backupmanager.Compat.listOf;
+import static com.example.backupmanager.Compat.mapOf;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -9,13 +11,15 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.UnsupportedEncodingException;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.URLDecoder;
-import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -23,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -61,9 +66,11 @@ class OceanProtectClientTests {
 
         OceanProtectClient.FetchSummary summary = client.fetchCopies(deliveredCopies::add);
 
-        assertEquals(new OceanProtectClient.FetchSummary(2, 2, 5), summary);
-        assertEquals(List.of("monthly-copy-0", "monthly-copy-1"),
-            deliveredCopies.stream().map(item -> item.path("uuid").asText()).toList());
+        assertEquals(2, summary.fetched());
+        assertEquals(2, summary.slaCount());
+        assertEquals(5, summary.pages());
+        assertEquals(listOf("monthly-copy-0", "monthly-copy-1"),
+            deliveredCopies.stream().map(item -> item.path("uuid").asText()).collect(Collectors.toList()));
 
         assertEquals(2, authCalls.size());
         for (AuthCall call : authCalls) {
@@ -81,26 +88,26 @@ class OceanProtectClientTests {
             assertEquals(1, request.path("language").asInt());
         }
 
-        assertEquals(List.of("0", "1"), values(slaCalls, "page_no"));
-        assertEquals(List.of("2", "2"), values(slaCalls, "page_size"));
+        assertEquals(listOf("0", "1"), values(slaCalls, "page_no"));
+        assertEquals(listOf("2", "2"), values(slaCalls, "page_size"));
         assertTrue(slaCalls.stream().allMatch(call -> call.token().equals("token-1")));
 
         assertEquals(4, copyCalls.size());
-        assertEquals(List.of("0", "0", "1", "0"), values(copyCalls, "page_no"));
+        assertEquals(listOf("0", "0", "1", "0"), values(copyCalls, "page_no"));
         assertTrue(copyCalls.stream().allMatch(call -> Integer.parseInt(call.query().get("page_size")) < 200));
         assertTrue(copyCalls.stream().allMatch(call -> call.query().get("page_size").equals("199")));
         assertTrue(copyCalls.stream().allMatch(call -> call.query().get("orders").equals("display_timestamp")));
-        assertEquals(List.of("token-1", "token-2", "token-2", "token-2"),
-            copyCalls.stream().map(HttpCall::token).toList());
+        assertEquals(listOf("token-1", "token-2", "token-2", "token-2"),
+            copyCalls.stream().map(HttpCall::token).collect(Collectors.toList()));
 
         List<String> conditions = copyCalls.stream()
             .map(call -> call.query().get("conditions"))
             .distinct()
-            .toList();
-        assertEquals(List.of("%sla_name%:" + MONTHLY_SLA, "%sla_name%:" + YEARLY_SLA), conditions);
+            .collect(Collectors.toList());
+        assertEquals(listOf("%sla_name%:" + MONTHLY_SLA, "%sla_name%:" + YEARLY_SLA), conditions);
         assertFalse(conditions.stream().anyMatch(condition -> condition.contains("daily-only")));
-        assertTrue(copyCalls.getFirst().rawQuery().contains("%25sla_name%25%3A"));
-        assertFalse(copyCalls.getFirst().rawQuery().contains(MONTHLY_SLA));
+        assertTrue(copyCalls.get(0).rawQuery().contains("%25sla_name%25%3A"));
+        assertFalse(copyCalls.get(0).rawQuery().contains(MONTHLY_SLA));
         assertTrue(handlerFailures.isEmpty(), () -> "HTTP handler failures: " + handlerFailures);
     }
 
@@ -115,15 +122,15 @@ class OceanProtectClientTests {
         assertTrue(error.getMessage().contains("HTTP 401"));
         assertEquals(2, authCalls.size());
         assertEquals(2, copyCalls.size());
-        assertEquals(List.of("token-1", "token-2"), copyCalls.stream().map(HttpCall::token).toList());
+        assertEquals(listOf("token-1", "token-2"),
+            copyCalls.stream().map(HttpCall::token).collect(Collectors.toList()));
         assertEquals(copyCalls.get(0).rawQuery(), copyCalls.get(1).rawQuery());
         assertEquals("0", copyCalls.get(0).query().get("page_no"));
         assertTrue(handlerFailures.isEmpty(), () -> "HTTP handler failures: " + handlerFailures);
     }
 
     private OceanProtectClient client() {
-        HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
-        OceanProtectClient client = new OceanProtectClient(mapper, http);
+        OceanProtectClient client = new OceanProtectClient(mapper);
         setField(client, "baseUrl", baseUrl + "/");
         setField(client, "username", "test-user");
         setField(client, "password", "test-password");
@@ -146,22 +153,22 @@ class OceanProtectClientTests {
             } else if (path.equals("/v1/copies")) {
                 handleCopies(exchange);
             } else {
-                respond(exchange, 404, Map.of("error", "not found"));
+                respond(exchange, 404, mapOf("error", "not found"));
             }
         } catch (Throwable error) {
             handlerFailures.add(error);
-            respond(exchange, 500, Map.of("error", error.toString()));
+            respond(exchange, 500, mapOf("error", error.toString()));
         } finally {
             exchange.close();
         }
     }
 
     private void handleAuthentication(HttpExchange exchange) throws IOException {
-        String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+        String body = new String(readAllBytes(exchange.getRequestBody()), StandardCharsets.UTF_8);
         authCalls.add(new AuthCall(exchange.getRequestMethod(), exchange.getRequestURI().getPath(),
             exchange.getRequestHeaders().getFirst("Content-Type"), body));
         int call = authCount.incrementAndGet();
-        respond(exchange, 200, Map.of("token", "token-" + call));
+        respond(exchange, 200, mapOf("token", "token-" + call));
     }
 
     private void handleSlas(HttpExchange exchange) throws IOException {
@@ -169,22 +176,22 @@ class OceanProtectClientTests {
         slaCalls.add(call);
         int page = Integer.parseInt(call.query().get("page_no"));
         if (page == 0) {
-            respond(exchange, 200, Map.of(
+            respond(exchange, 200, mapOf(
                 "page_no", 0,
                 "pages", 2,
-                "items", List.of(
+                "items", listOf(
                     sla(MONTHLY_SLA, "month"),
                     sla("daily-only", "day")
                 )
             ));
         } else if (page == 1) {
-            respond(exchange, 200, Map.of(
+            respond(exchange, 200, mapOf(
                 "page_no", 1,
                 "pages", 2,
-                "items", List.of(sla(YEARLY_SLA, "year"))
+                "items", listOf(sla(YEARLY_SLA, "year"))
             ));
         } else {
-            respond(exchange, 500, Map.of("error", "unexpected SLA page " + page));
+            respond(exchange, 500, mapOf("error", "unexpected SLA page " + page));
         }
     }
 
@@ -192,22 +199,22 @@ class OceanProtectClientTests {
         HttpCall call = record(exchange);
         copyCalls.add(call);
         if (rejectEveryCopy || copyCalls.size() == 1) {
-            respond(exchange, 401, Map.of("error", "expired token"));
+            respond(exchange, 401, mapOf("error", "expired token"));
             return;
         }
 
         int page = Integer.parseInt(call.query().get("page_no"));
         String condition = call.query().get("conditions");
         if (condition.equals("%sla_name%:" + MONTHLY_SLA) && page <= 1) {
-            respond(exchange, 200, Map.of(
+            respond(exchange, 200, mapOf(
                 "page_no", page,
                 "pages", 2,
-                "items", List.of(Map.of("uuid", "monthly-copy-" + page))
+                "items", listOf(mapOf("uuid", "monthly-copy-" + page))
             ));
         } else if (condition.equals("%sla_name%:" + YEARLY_SLA) && page == 0) {
-            respond(exchange, 200, Map.of("page_no", 0, "pages", 1, "items", List.of()));
+            respond(exchange, 200, mapOf("page_no", 0, "pages", 1, "items", listOf()));
         } else {
-            respond(exchange, 500, Map.of("error", "unexpected copies request"));
+            respond(exchange, 500, mapOf("error", "unexpected copies request"));
         }
     }
 
@@ -227,13 +234,17 @@ class OceanProtectClientTests {
     }
 
     private static String decode(String value) {
-        return URLDecoder.decode(value, StandardCharsets.UTF_8);
+        try {
+            return URLDecoder.decode(value, StandardCharsets.UTF_8.name());
+        } catch (UnsupportedEncodingException error) {
+            throw new AssertionError(error);
+        }
     }
 
     private static Map<String, Object> sla(String name, String action) {
-        return Map.of(
+        return mapOf(
             "name", name,
-            "policy_list", List.of(Map.of("schedule", Map.of("trigger_action", action)))
+            "policy_list", listOf(mapOf("schedule", mapOf("trigger_action", action)))
         );
     }
 
@@ -245,12 +256,12 @@ class OceanProtectClientTests {
     }
 
     private static List<String> values(List<HttpCall> calls, String key) {
-        return calls.stream().map(call -> call.query().get(key)).toList();
+        return calls.stream().map(call -> call.query().get(key)).collect(Collectors.toList());
     }
 
     private static void setField(Object target, String name, Object value) {
         try {
-            var field = target.getClass().getDeclaredField(name);
+            Field field = target.getClass().getDeclaredField(name);
             field.setAccessible(true);
             field.set(target, value);
         } catch (ReflectiveOperationException error) {
@@ -258,7 +269,53 @@ class OceanProtectClientTests {
         }
     }
 
-    private record AuthCall(String method, String path, String contentType, String body) {}
-    private record HttpCall(String method, String path, String rawQuery,
-                            Map<String, String> query, String token) {}
+    private static byte[] readAllBytes(InputStream input) throws IOException {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        byte[] buffer = new byte[4096];
+        int count;
+        while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+        return output.toByteArray();
+    }
+
+    private static final class AuthCall {
+        private final String method;
+        private final String path;
+        private final String contentType;
+        private final String body;
+
+        private AuthCall(String method, String path, String contentType, String body) {
+            this.method = method;
+            this.path = path;
+            this.contentType = contentType;
+            this.body = body;
+        }
+
+        private String method() { return method; }
+        private String path() { return path; }
+        private String contentType() { return contentType; }
+        private String body() { return body; }
+    }
+
+    private static final class HttpCall {
+        private final String method;
+        private final String path;
+        private final String rawQuery;
+        private final Map<String, String> query;
+        private final String token;
+
+        private HttpCall(String method, String path, String rawQuery,
+                         Map<String, String> query, String token) {
+            this.method = method;
+            this.path = path;
+            this.rawQuery = rawQuery;
+            this.query = query;
+            this.token = token;
+        }
+
+        private String method() { return method; }
+        private String path() { return path; }
+        private String rawQuery() { return rawQuery; }
+        private Map<String, String> query() { return query; }
+        private String token() { return token; }
+    }
 }

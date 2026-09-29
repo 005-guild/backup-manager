@@ -1,5 +1,6 @@
 package com.example.backupmanager;
 
+import static com.example.backupmanager.Compat.listOf;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
@@ -45,7 +46,7 @@ class BackupSyncServiceTests {
         when(catalog.hasBackup("monthly", "shared-copy")).thenReturn(true);
         when(catalog.hasBackup("yearly", "shared-copy")).thenReturn(false);
 
-        List<JsonNode> copies = List.of(
+        List<JsonNode> copies = listOf(
             copy("monthly_new_db", "monthly-new", "2026-09-01T00:00:00Z", "available",
                 "monthly-policy", "month"),
             copy("monthly_existing_db", "shared-copy", "2026-09-02T00:00:00Z", "available",
@@ -53,22 +54,11 @@ class BackupSyncServiceTests {
             copy("yearly_new_db", "shared-copy", "2026-12-31T00:00:00Z", "available",
                 "yearly-policy", "year"),
             mapper.readTree("{\"uuid\":\"ignored-copy\"}"),
-            mapper.readTree("""
-                {
-                  "resource_name": "ambiguous_db",
-                  "uuid": "ambiguous-copy",
-                  "display_timestamp": "2026-12-31T00:00:00Z",
-                  "status": "available",
-                  "generated_by": "sla",
-                  "sla_name": "combined-policy",
-                  "sla_properties": {
-                    "policy_list": [
-                      {"schedule": {"trigger_action": "month"}},
-                      {"schedule": {"trigger_action": "year"}}
-                    ]
-                  }
-                }
-                """)
+            mapper.readTree("{\"resource_name\":\"ambiguous_db\",\"uuid\":\"ambiguous-copy\","
+                + "\"display_timestamp\":\"2026-12-31T00:00:00Z\",\"status\":\"available\","
+                + "\"generated_by\":\"sla\",\"sla_name\":\"combined-policy\","
+                + "\"sla_properties\":{\"policy_list\":[{\"schedule\":{\"trigger_action\":\"month\"}},"
+                + "{\"schedule\":{\"trigger_action\":\"year\"}}]}}")
         );
         when(oceanProtect.fetchCopies(any())).thenAnswer(invocation -> {
             OceanProtectClient.CopyConsumer consumer = invocation.getArgument(0);
@@ -127,20 +117,10 @@ class BackupSyncServiceTests {
 
     private JsonNode copy(String database, String externalId, String timestamp, String status,
                           String slaName, String action) throws Exception {
-        return mapper.readTree("""
-            {
-              "resource_name": "%s",
-              "uuid": "%s",
-              "display_timestamp": "%s",
-              "status": "%s",
-              "generated_by": "sla",
-              "sla_name": "%s",
-              "sla_properties": {
-                "policy_list": [
-                  {"schedule": {"trigger_action": "%s"}}
-                ]
-              }
-            }
-            """.formatted(database, externalId, timestamp, status, slaName, action));
+        return mapper.readTree(String.format(
+            "{\"resource_name\":\"%s\",\"uuid\":\"%s\",\"display_timestamp\":\"%s\","
+                + "\"status\":\"%s\",\"generated_by\":\"sla\",\"sla_name\":\"%s\","
+                + "\"sla_properties\":{\"policy_list\":[{\"schedule\":{\"trigger_action\":\"%s\"}}]}}",
+            database, externalId, timestamp, status, slaName, action));
     }
 }

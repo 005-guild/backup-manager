@@ -9,25 +9,52 @@ import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
-import java.util.HexFormat;
-import java.util.List;
+import static com.example.backupmanager.Compat.isBlank;
+import static com.example.backupmanager.Compat.listOf;
+import static com.example.backupmanager.Compat.toHex;
 
 final class PlatformParser {
     private static final ZoneId ZONE = ZoneId.of("Asia/Shanghai");
     private PlatformParser() {}
 
-    record Normalized(String databaseName, String externalId, LocalDate backupDate,
-                      boolean dateInferred, Instant eventTime, String status, String rawJson) {}
+    static final class Normalized {
+        private final String databaseName;
+        private final String externalId;
+        private final LocalDate backupDate;
+        private final boolean dateInferred;
+        private final Instant eventTime;
+        private final String status;
+        private final String rawJson;
+
+        Normalized(String databaseName, String externalId, LocalDate backupDate,
+                   boolean dateInferred, Instant eventTime, String status, String rawJson) {
+            this.databaseName = databaseName;
+            this.externalId = externalId;
+            this.backupDate = backupDate;
+            this.dateInferred = dateInferred;
+            this.eventTime = eventTime;
+            this.status = status;
+            this.rawJson = rawJson;
+        }
+
+        String databaseName() { return databaseName; }
+        String externalId() { return externalId; }
+        LocalDate backupDate() { return backupDate; }
+        boolean dateInferred() { return dateInferred; }
+        Instant eventTime() { return eventTime; }
+        String status() { return status; }
+        String rawJson() { return rawJson; }
+    }
 
     static JsonNode rows(JsonNode body, String dataPath) {
-        if (!dataPath.isBlank()) {
+        if (!isBlank(dataPath)) {
             JsonNode current = body;
             for (String part : dataPath.split("\\.")) current = current.path(part);
             if (!current.isArray()) throw new IllegalArgumentException("接口记录路径无效: " + dataPath);
             return current;
         }
         if (body.isArray()) return body;
-        for (String path : List.of("data.records", "data.rows", "data.list", "data", "records", "rows", "list", "result.records", "result.rows", "result.list")) {
+        for (String path : listOf("data.records", "data.rows", "data.list", "data", "records", "rows", "list", "result.records", "result.rows", "result.list")) {
             JsonNode current = body;
             for (String part : path.split("\\.")) current = current.path(part);
             if (current.isArray()) return current;
@@ -42,13 +69,13 @@ final class PlatformParser {
         if (name.isEmpty() || status.isEmpty() || time.isEmpty()) throw new IllegalArgumentException("记录缺少 dbname、status 或 time");
         Instant updated = parseTime(time);
         String explicitDate = firstText(row, "backupDate", "backup_date", "date");
-        boolean inferred = explicitDate.isBlank();
+        boolean inferred = isBlank(explicitDate);
         LocalDate backupDate = inferred ? updated.atZone(ZONE).toLocalDate() : LocalDate.parse(explicitDate.substring(0, 10));
         String id = firstText(row, "id", "backupId", "taskId");
-        if (id.isBlank()) {
+        if (isBlank(id)) {
             try {
                 byte[] bytes = MessageDigest.getInstance("SHA-256").digest((name + "|" + updated + "|" + status).getBytes(StandardCharsets.UTF_8));
-                id = "derived:" + HexFormat.of().formatHex(bytes);
+                id = "derived:" + toHex(bytes);
             } catch (Exception error) { throw new IllegalStateException(error); }
         }
         return new Normalized(name, id, backupDate, inferred, updated, status, row.toString());
@@ -57,7 +84,7 @@ final class PlatformParser {
     private static String firstText(JsonNode row, String... fields) {
         for (String field : fields) {
             JsonNode value = row.path(field);
-            if (!value.isMissingNode() && !value.isNull() && !value.asText().isBlank()) return value.asText().trim();
+            if (!value.isMissingNode() && !value.isNull() && !isBlank(value.asText())) return value.asText().trim();
         }
         return "";
     }

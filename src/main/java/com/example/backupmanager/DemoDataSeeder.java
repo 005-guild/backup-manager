@@ -90,7 +90,7 @@ public class DemoDataSeeder implements ApplicationRunner {
     private void save(long databaseId, String name, String kind, LocalDate date, String status, boolean inferred) throws Exception {
         LocalDateTime updated = date.atTime(2 + (int) (databaseId % 5), 10);
         String externalId = "DEMO:" + kind + ":" + name + ":" + date;
-        Map<String, Object> rawFields = new LinkedHashMap<>(Map.of(
+        Map<String, Object> rawFields = new LinkedHashMap<>(Compat.mapOf(
             "demo", true, "dbname", name, "status", status, "time", updated.toString()));
         if (!inferred) rawFields.put("backupDate", date.toString());
         String raw = mapper.writeValueAsString(rawFields);
