@@ -1,175 +1,464 @@
-# 数据库备份管理（Spring Boot + MyBatis + React）
+# 数据库备份管理平台
 
-后端为 JDK 8 / Spring Boot 2.7，前端为 React。PostgreSQL 存储备份元数据与登录会话，Docker Compose 提供单台虚拟机部署；Web 后端可横向扩展，调度器保持一个实例。
+一个用于汇总数据库资产、同步备份平台记录并按策略检查备份完整性的 Web 系统。后端使用 **JDK 8、Spring Boot 2.7 和 MyBatis**，前端使用 **React**；本地演示使用 H2 文件数据库，正式部署使用 PostgreSQL 14。
 
-## 整体架构
+系统目前管理备份**元数据和规则检查结果**，不保存备份文件本身。日备平台以及 OceanProtect 月备、年备接口已经接入；触发备份接口尚未实现。
 
-```text
-React 页面
-    ↓ HTTP / JSON
-Spring MVC + Spring Security
-    ↓
-ApiController / AuthController
-    ↓
-备份同步、规则判断、覆盖率等 Service
-    ↓
-CatalogRepository（业务持久化门面，不包含 SQL）
-    ↓
-MyBatis Mapper 接口 + XML SQL
-    ↓
-PostgreSQL（正式环境）/ H2 PostgreSQL 兼容模式（本地与测试）
+## 5 分钟本地运行
+
+### 环境要求
+
+- Windows PowerShell 5.1 或更高版本
+- JDK 8
+- Node.js 20.19+ 或 22.12+
+- pnpm
+
+仓库自带 Maven Wrapper，无需单独安装 Maven。第一次构建后端和安装前端依赖时需要访问依赖仓库。
+
+如果电脑中有多个 JDK，可以在项目根目录新建不会提交到 Git 的 `.local-toolchain.ps1`：
+
+```powershell
+$env:BACKUP_MANAGER_JAVA_HOME = 'C:\path\to\jdk8'
+# 可选：指定 Maven 本地仓库
+$env:BACKUP_MANAGER_MAVEN_REPO = 'C:\path\to\maven-repository'
 ```
 
-业务持久化已统一为 MyBatis，不使用 JPA，也没有在业务类中直接使用 `JdbcTemplate`。API 和业务服务主要通过 `CatalogRepository` 访问数据；该类负责数据库自动登记、备份幂等写入、同步记录主键回填等持久化流程，但具体 SQL 全部位于 Mapper XML。登录认证和首个管理员初始化直接使用 `UserMapper`，避免再增加一层只做转发的包装。
+### 启动步骤
 
-### 数据库结构和 SQL 的职责
+在项目根目录依次执行：
 
-- **Flyway 管理 DDL 和基础数据**：正式 PostgreSQL 使用 `src/main/resources/db/migration`，本地 H2 使用 `src/main/resources/db/local`。建表、索引、约束、默认规则和后续结构升级只能通过新增版本化迁移脚本完成，应用启动时不会由 ORM 自动生成或修改表。
-- **MyBatis 管理业务查询和 DML**：Java Mapper 接口位于 `src/main/java/com/example/backupmanager`，对应 XML 位于 `src/main/resources/mapper`。`application.yml` 通过 `classpath*:mapper/*.xml` 加载映射，并开启下划线字段名到 Java 驼峰属性名的转换。
-- **Spring Session 保持 JDBC 存储**：`SPRING_SESSION` 和 `SPRING_SESSION_ATTRIBUTES` 由 Flyway 创建，Spring Session JDBC 负责读写，使多个后端实例可以共享登录状态。这是框架基础设施，不属于业务 ORM。
-- **Flyway 自身使用 JDBC 执行迁移**：它只在启动阶段校验和升级结构；运行期的业务读写由 MyBatis 完成。
+```powershell
+# 1. 编译后端并执行后端测试
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-backend.ps1
 
-当前 Mapper 与数据表的对应关系：
+# 2. 启动后端，保持此窗口运行
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-local-backend.ps1
+```
 
-| Mapper | 主要数据表 | 职责 |
+另开一个 PowerShell 窗口：
+
+```powershell
+# 3. 安装依赖并启动前端
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-local-frontend.ps1
+```
+
+打开 <http://127.0.0.1:5173/>。后端监听 `127.0.0.1:8080`，Vite 会把 `/api` 和 `/actuator` 转发到后端。
+
+首次启动时，本地脚本会：
+
+1. 创建随机管理员密码并写入根目录的 `.local-credentials`；
+2. 启用 `local` Profile，使用 `data/backup_manager.mv.db`；
+3. 默认设置 `APP_DEMO_SEED=true`，幂等生成 72 个演示数据库和 3,556 条目标演示记录。
+
+使用 `.local-credentials` 中的账号登录。该文件和 `data/` 均已被 Git 忽略。若数据库中已有历史记录，页面总数可能大于上述演示数据规模。
+
+## 已实现功能
+
+- 多用户登录，支持 `ADMIN` 和 `VIEWER` 两种角色，登录会话存放在数据库中。
+- 数据库资产列表、前端资产多字段搜索、框架及监控状态筛选、分页浏览；后端 `q` 参数仅按数据库名模糊查询。
+- 数据库详情与资产信息维护，包括 DBID、标签、等级、框架、版本、子系统、开发人员、DBA、服务单元和建库日期。
+- 按数据库、日期范围、备份类型和状态查询历史备份记录。
+- 备份日历，按月查看每天的备份数量和明细。
+- 日备、月备、年备计划矩阵及缺失检查。
+- 日备平台分页同步，以及 OceanProtect 月备、年备副本同步。
+- 自动调度和管理员手动同步，保留同步批次、计数及错误信息。
+- 管理员配置规则、登记数据库、维护资产信息和创建用户。
+- 仪表盘展示最近 7 天的缺失、待完成和日期待核记录。
+
+当前功能边界：
+
+- 备份触发接口尚未接入。
+- `retention_days` 是页面展示和规则核验窗口，不会删除备份平台上的文件。
+- 如果上游只有备份记录接口而没有独立数据库清单，完全没有备份记录的数据库只能通过管理员登记，或在后续接入库清单接口后自动导入。
+- 系统根据接口元数据判断备份是否满足规则；实际备份文件是否仍存在，需要上游提供当前备份清单或文件核验接口。
+
+## 技术栈
+
+| 层级 | 技术 |
+| --- | --- |
+| 后端 | JDK 8、Spring Boot 2.7.18、Spring MVC、Spring Security、Spring Session JDBC、Actuator |
+| 持久化 | MyBatis Spring Boot Starter 2.3.2、XML Mapper、Flyway |
+| 数据库 | PostgreSQL 14；本地 H2 2.2.224（PostgreSQL 兼容模式） |
+| 前端 | React 19、Vite 7 |
+| 前端容器 | Node.js 22、pnpm 11.19、Nginx 1.27 |
+| 部署 | Docker Compose |
+
+## 系统架构
+
+```mermaid
+flowchart LR
+    U[浏览器] --> F[React 页面]
+    F -->|/api| W[Vite 开发代理或 Nginx]
+    W --> C[Spring MVC / Security]
+    C --> S[同步、规则、覆盖率服务]
+    S --> R[CatalogRepository]
+    R --> M[MyBatis Mapper 接口和 XML]
+    M --> D[(PostgreSQL / H2)]
+    C --> SS[Spring Session JDBC]
+    SS --> D
+    SCH[单个调度器实例] --> S
+    S --> P[日备平台 / OceanProtect]
+```
+
+`CatalogRepository` 是业务层的持久化门面，负责数据库自动登记、备份幂等写入和同步记录主键回填。SQL 位于 `src/main/resources/mapper/`，项目不使用 JPA，业务类中也没有直接编写 `JdbcTemplate` SQL。
+
+Flyway 负责表结构和基础数据：
+
+- `src/main/resources/db/migration/`：PostgreSQL 迁移；
+- `src/main/resources/db/local/`：本地 H2 迁移。
+
+修改表结构时，应为两套数据库新增相同版本号的迁移文件。已经执行过的历史迁移不能直接修改，否则现有环境会出现 Flyway 校验失败。
+
+## 项目目录
+
+```text
+backup-manager/
+├─ src/main/java/com/example/backupmanager/
+│  ├─ ApiController.java          HTTP API
+│  ├─ BackupSyncService.java      日备与 OceanProtect 同步、定时任务
+│  ├─ RuleService.java            指定日期范围的规则检查
+│  ├─ CoverageService.java        详情页计划矩阵计算
+│  ├─ CatalogRepository.java      业务持久化门面
+│  └─ *Mapper.java                MyBatis Mapper 接口
+├─ src/main/resources/
+│  ├─ mapper/*.xml                查询与写入 SQL
+│  ├─ db/migration/               PostgreSQL Flyway 迁移
+│  ├─ db/local/                   H2 Flyway 迁移
+│  ├─ application.yml             通用配置
+│  └─ application-local.yml       本地 H2 配置
+├─ src/test/                      后端单元与集成测试
+├─ frontend/                      React 前端及 Nginx 配置
+├─ scripts/                       Windows 构建、运行和 H2 迁移脚本
+├─ compose.yaml                   PostgreSQL、后端、调度器和前端
+├─ backend.Dockerfile             JDK 8 后端镜像
+└─ pom.xml                        Maven 与 Java 8 配置
+```
+
+## 核心数据表
+
+| 表 | 用途 | 关键字段 |
 | --- | --- | --- |
-| `DatabaseMapper` | `database_catalog` | 数据库资产登记、列表、详情、元数据和监控起始日 |
-| `BackupMapper` | `backup_record` | 备份记录筛选、规则核验查询、日历统计和幂等新增/更新 |
-| `RuleMapper` | `backup_rule` | 日备、月备、年备规则读取与配置 |
-| `SyncRunMapper` | `sync_run` | 同步任务开始、完成、计数、错误和最近执行记录 |
-| `UserMapper` | `app_user` | 登录账号读取、管理员初始化和用户创建 |
+| `app_user` | 应用账号 | `username`、BCrypt `password_hash`、`role`、`enabled` |
+| `database_catalog` | 数据库资产和监控起点 | `name`、`monitor_from`、`active` 及各资产字段 |
+| `backup_record` | 上游备份记录 | `database_id`、`kind`、`external_id`、`backup_date`、`date_inferred`、`event_time`、`status`、`raw_data` |
+| `backup_rule` | 三类规则 | `kind`、`enabled`、`grace_days`、`retention_days` |
+| `sync_run` | 同步批次 | `kind`、开始/结束时间、状态、拉取数、保存数和错误信息 |
+| `SPRING_SESSION*` | 登录会话 | Spring Session JDBC 标准字段 |
 
-关键目录如下：
+`backup_record` 通过 `(kind, external_id)` 唯一约束实现同一上游记录的幂等更新。平台凭据不会写入这些表；`raw_data` 保存单条备份记录的原始 JSON，便于追踪字段来源。
 
-```text
-src/main/java/com/example/backupmanager/
-  *Mapper.java                 MyBatis Mapper 方法定义
-  CatalogRepository.java      面向业务服务的无 SQL 持久化门面
-  *Service.java               同步、规则和覆盖率业务逻辑
-src/main/resources/
-  mapper/*.xml                PostgreSQL/H2 兼容的业务 SQL 与结果映射
-  db/migration/V*.sql         正式 PostgreSQL 的 Flyway 迁移
-  db/local/V*.sql             本地 H2 的 Flyway 迁移
-src/test/java/com/example/backupmanager/
-  MyBatisPersistenceTests.java MyBatis 与迁移脚本集成测试
-```
+## 规则口径
 
-## 在 VS Code 中运行
+默认规则由 Flyway 初始化：
 
-前置环境为 JDK 8、Node.js 20.19+ 和 pnpm；请通过 `JAVA_HOME` 或 `PATH` 提供 JDK，通过 `PATH` 提供 pnpm。仓库自带 Maven Wrapper，不要求单独安装 Maven。项目可以克隆到任意目录。Windows 版 VS Code 可直接使用仓库中的任务；其他系统可按照“本地开发”一节运行对应命令。
+| 类型 | 计划日 | 默认启用 | 宽限期 | 核验窗口 |
+| --- | --- | --- | --- | --- |
+| 日备 `daily` | 每天 | 是 | 2 天 | 7 天 |
+| 月备 `monthly` | 每月 1 日 | 否 | 2 天 | 365 天 |
+| 年备 `yearly` | 每年 12 月 31 日 | 否 | 2 天 | 自监控开始以来，永久 |
 
-在 VS Code 中运行任务（菜单“终端”→“运行任务”）：先运行“1. 构建后端”，再分别运行“2. 启动后端（本地数据库）”和“3. 启动前端”。打开 `http://127.0.0.1:5173/`。首次管理员用户名为 `admin`，随机生成的密码保存在项目根目录的 `.local-credentials` 文件中。该文件和本地数据库 `data/` 已加入忽略列表，请勿提交到仓库。
+判断规则如下：
 
-通过 VS Code 本地启动脚本首次运行时，会生成 72 个以 `DEMO_` 开头的数据库和 3,556 条备份记录，用于查看列表、日历和规则检查效果。`DEMO_pay_001` 展示连续成功日备，`DEMO_trade_017` 展示失败备份，8 个 `DEMO_empty_...` 数据库完全没有备份；其他库混合成功、取消、进行中和缺失。演示库的月备、年备可以在详情矩阵中查看；真实月备和年备在配置 OceanProtect 后从副本接口同步。样例只会在本地配置且 `APP_DEMO_SEED=true` 时生成，重复执行会按固定编号更新，不会成倍增加。手动启动时可自行设置该环境变量。
+- 计划日当天及之后 2 天为完成窗口；在 `计划日 + 2 天` 当天仍是待完成，当前日期超过该截止日才判定缺失。
+- `successed` 为成功，`DISPATCHING` 为进行中，`cancel` 为取消或失败，比较时不区分大小写。
+- 一个成功记录只能覆盖一个计划格子。
+- 日备必须归属于自己的计划日，不会用次日备份掩盖前一天的缺口。
+- 月备、年备允许宽限期内在非计划日完成，并匹配到对应计划日。
+- 数据库的核验起点取 `monitor_from` 和 `created_on` 中较晚的日期，不要求新库补齐建库前的备份。
+- 未启用的规则显示为未核验；演示库仍用模拟数据展示月备和年备矩阵。
 
-本地配置使用项目目录下的 H2 文件数据库，便于在没有 Docker/PostgreSQL 的电脑上运行。正式部署仍使用下面的 PostgreSQL 与 Docker Compose 配置。真实平台凭据未写入本地项目；日备使用 `BACKUP_DAILY_*`，月备/年备使用 `OCEANPROTECT_*` 环境变量。本地调度默认关闭。
+详情矩阵中：黄色表示成功，红色表示缺失或失败，蓝色表示进行中，灰色表示仍在宽限期、日期待核或规则未启用。
 
-## 已实现
+### 备份日期的准确性
 
-- 多人登录；管理员可创建查看者和管理员账号。
-- 数据库资产列表采用白底蓝色的紧凑表格，包含 DBID、标签、有效标识、等级、框架、版本、子系统、开发人员、DBA 和服务单元，支持关键词搜索、框架/监控状态筛选和分页。
-- 点击数据库名进入详情：显示建库日期和资产资料，管理员可以编辑资料；真实库尚未提供的字段显示“—”。
-- 详情按实际规则逐格展示日备、月备和年备。默认日备 7 格、月备 12 格，年备按建库/监控以来已到期的年末计划生成。新建库不会要求建库前的备份。调整保留期限后，格子数量和规则说明随之变化。
-- 黄色代表确认成功，红色代表缺失或失败，蓝色代表进行中，灰色代表仍在宽限期或未核验。点击格子可查看说明和对应记录，下面保留全部历史备份的筛选查询。
-- 按数据库查看全部历史备份、按日期查看备份日历、按状态和类型筛选。
-- 日备规则：每天一份，保留期配置为 7 天，计划日后 2 天仍无成功备份则显示缺失。
-- 月备和年备规则分别为每月 1 日、每年 12 月 31 日，保留一年和永久；OceanProtect 接口已经接入。规则默认关闭，管理员可以先按现有或演示数据启用检查；正式使用建议首次真实同步并确认资源名称和策略日期后再启用。
-- 每天按北京时间 06:00 分别同步日备平台和已配置的 OceanProtect 月备/年备；管理员也可在“同步记录”中分别手动执行。
-- 备份触发接口尚未接入，界面没有虚假的触发操作。
+日备接口中的 `time` 是**记录更新时间**。只有记录包含 `backupDate`、`backup_date` 或 `date` 时，系统才把日期视为明确的计划日期。缺少这些字段时，系统会从 `time` 推定日期并设置 `date_inferred=true`；这类成功记录显示“日期待核”，不会被当作确认成功。
 
-`successed` 视为成功、`DISPATCHING` 为进行中、`cancel` 为失败。OceanProtect 的 `available` 会在入库时转换为 `successed`，文档没有定义的其他状态保留原值，不会被误判为成功。一个成功记录只覆盖一个计划日；无备份记录或逾期仍进行中的备份会在宽限期结束后显示缺失。日备优先按明确的备份日期归属当天，不会用次日日备掩盖前一天的缺口；月备/年备可匹配宽限期内的非计划日备份。规则未启用时显示未核验，演示库继续使用模拟记录展示效果。
+如果上游不提供稳定的 `id`、`backupId` 或 `taskId`，系统会根据数据库名、更新时间和状态派生 ID。此时同一任务的状态变化可能形成多条记录，正式联调时应优先要求上游提供稳定任务 ID。
 
-**准确性边界：**已知接口的 `time` 是记录更新时间。只有接口提供独立的 `backupDate`、`backup_date` 或 `date` 时，记录才可用于确认计划日达标。否则页面显示“推定”“待核对日期”，不会误判成功。接口若没有不可变 `id`、`backupId` 或 `taskId`，状态更新可能形成多条记录。保留 7 天/一年目前是规则配置，实际备份文件是否仍存在需要“当前备份清单”接口才能核验。
+## Docker Compose 部署
 
-## Docker 启动
+Docker 部署包含四个服务：
 
-Docker 部署使用 JDK 8、Spring Boot 2.7 和 PostgreSQL 14。若现有 `postgres_data` 数据卷曾由 PostgreSQL 17 创建，不能直接挂载给 PostgreSQL 14；PostgreSQL 不支持数据目录原地降级。请先在 PostgreSQL 17 环境中使用 `pg_dump` 完成逻辑备份，再创建新的 PostgreSQL 14 数据卷并使用 `pg_restore` 恢复。确认备份可用前不要删除原数据卷。
+- `db`：PostgreSQL 14；
+- `backend`：处理 Web API，定时任务关闭；
+- `scheduler`：运行同一完整后端应用，启用定时同步且不向宿主机发布端口；
+- `frontend`：Nginx 托管 React 静态文件并代理 API。
 
-1. 将 `.env.example` 复制为 `.env`。设置强 `DB_PASSWORD`、`BOOTSTRAP_ADMIN_PASSWORD`、日备平台配置，以及 OceanProtect 地址、用户名和密码。不要把 `.env` 提交到代码仓库。
-2. 执行 `docker compose up -d --build`。浏览器打开 `http://服务器:8080`，用 `.env` 中的管理员账号登录。
-3. 首次管理员建立后，可从 `.env` 删除 `BOOTSTRAP_ADMIN_PASSWORD` 并重启服务；其他用户在“用户”页创建。
-4. 管理员可在“同步记录”中先执行一次手动同步。后台调度器每天北京时间 06:00 自动同步，`BACKUP_SYNC_CRON` 可调整。
+只有 `frontend` 对宿主机发布端口；`backend` 的 8080 端口仅在 Compose 网络内开放。
 
-在单台虚拟机上运行一个 `backend`、一个 `scheduler` 即可。多实例 Web 服务可执行 `docker compose up -d --scale backend=2`；登录会话保存在 PostgreSQL，`scheduler` 仍只运行一个实例。实际对外使用时，应通过 HTTPS 反向代理发布前端，并设置 `COOKIE_SECURE=true`。
-
-## 本地开发
-
-- 后端：JDK 8 / Spring Boot 2.7。直接运行 `./mvnw spring-boot:run` 时默认连接 PostgreSQL，需要配置 `DB_URL`、`DB_USER`、`DB_PASSWORD` 和首次管理员环境变量；Windows 本地演示可使用 VS Code 任务或 `scripts/run-local-backend.ps1`，它会启用 `local` 配置并连接项目 `data/` 下的 H2 文件数据库。
-- 前端：Node 20.19+，进入 `frontend`，运行 `pnpm install` 和 `pnpm dev`。开发服务器会把 `/api` 转发给 `localhost:8080`。
-- 后端测试：运行 `./mvnw test`。`MyBatisPersistenceTests` 使用内存 H2 的 PostgreSQL 兼容模式；OceanProtect 测试使用本机模拟 HTTP 服务验证认证、SLA/副本分页、令牌刷新、字段解析和月年备入库；其他测试验证规则判断和日备平台解析。
-- 后端完整构建：Windows 运行 `scripts/build-backend.ps1`，其他系统运行 `./mvnw package`；Maven 会在打包前执行测试。前端构建：进入 `frontend` 后运行 `pnpm build`。
-
-### 旧本地 H2 数据的一次性迁移
-
-`scripts/migrate-local-h2-2.3-to-2.2.ps1` 只用于把**曾由 H2 2.3.232 打开的旧本地文件库**迁移到本项目使用的 H2 2.2.224。新建的 H2 2.2.224 数据库、已经迁移过的数据库和 PostgreSQL 都不应运行该脚本。运行前先退出后端和所有 H2 工具，并确认 `data/backup_manager.mv.db` 的来源版本确实为 2.3.232。
-
-迁移脚本先用 H2 2.3.232 完整导出 SQL，在创建新库前生成带毫秒时间戳且不会覆盖旧文件的原库备份，然后用 H2 2.2.224 创建新库并重新打开校验。Spring Boot 3 与 Spring Boot 2.7 的登录会话序列化格式不兼容，因此脚本会在目标库中通过事务仅清空 `SPRING_SESSION_ATTRIBUTES` 和 `SPRING_SESSION`，迁移完成后所有用户需要重新登录；用户、数据库和备份等业务数据不会被清理。导出、备份、导入、会话清理或校验任一步失败时，脚本会删除未完成的新库并自动放回原文件。时间戳备份会保留在原数据库目录中，例如 `data/backup_manager.before-h2-2.2.224.20260929-120000000.mv.db`；确认应用和数据正常前不要删除它。
-
-H2 2.3.232 需要 Java 11 或更高版本完成导出，H2 2.2.224 导入端可使用项目的 JDK 8。脚本会依次从环境变量、项目附近的 JDK/Maven 仓库和用户 Maven 仓库查找 Java 与两个 H2 jar；找不到时可传入绝对路径。默认数据库是项目中的 `data/backup_manager`：
+### 1. 创建配置
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\migrate-local-h2-2.3-to-2.2.ps1 -ConfirmLegacyH2
+Copy-Item .env.example .env
 ```
 
-需要显式指定工具或数据库时，所有路径参数都必须是绝对路径；`DatabaseBasePath` 可以传不带后缀的数据库基路径，也可以传 `.mv.db` 文件：
+至少替换 `.env` 中的：
+
+- `DB_PASSWORD`：PostgreSQL 强密码；
+- `BOOTSTRAP_ADMIN_USER`：首个管理员用户名；
+- `BOOTSTRAP_ADMIN_PASSWORD`：至少 12 位，且不能以 `replace-` 开头。
+
+首次启动空数据库时必须保留两个 `BOOTSTRAP_ADMIN_*` 变量。只有 `app_user` 中已有账号后，才可以删除管理员密码并重启。没有使用的备份平台配置应留空，不要保留示例占位值。
+
+### 2. 构建并启动
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\migrate-local-h2-2.3-to-2.2.ps1 `
-  -ConfirmLegacyH2 `
-  -DatabaseBasePath 'D:\Vscode\backup-manager\data\backup_manager' `
-  -SourceH2Jar 'C:\Users\me\.m2\repository\com\h2database\h2\2.3.232\h2-2.3.232.jar' `
-  -TargetH2Jar 'C:\Users\me\.m2\repository\com\h2database\h2\2.2.224\h2-2.2.224.jar' `
-  -SourceJavaPath 'C:\Program Files\Eclipse Adoptium\jdk-21\bin\java.exe' `
-  -TargetJavaPath 'C:\Program Files\Eclipse Adoptium\jdk-8\bin\java.exe'
+docker compose up -d --build
+docker compose ps
 ```
 
-VS Code 的 Java Language Server 可以使用较新的 JDK；这只是编辑器自身的运行环境。项目仍由 `pom.xml` 的 `java.version=1.8`、`JavaSE-1.8` 项目运行时以及 `BACKUP_MANAGER_JAVA_HOME` 指向的 JDK 8 编译和启动。Windows 可在本机未提交的 `.vscode/settings.json` 中分别配置：
+打开 `http://服务器地址:8080/`。修改 `APP_PORT` 可以改变宿主机端口。
+
+健康检查：
+
+```powershell
+curl.exe -fsS http://127.0.0.1:8080/actuator/health
+```
+
+查看日志：
+
+```powershell
+docker compose logs -f backend scheduler
+```
+
+后端 Dockerfile 为缩短镜像构建时间使用 `-DskipTests`。发布前应先在开发或 CI 环境执行完整测试。
+
+### 多实例
+
+Web 后端可以横向扩展，登录会话由 PostgreSQL 共享：
+
+```powershell
+docker compose up -d --scale backend=2
+```
+
+调度器只能保持一个实例，以免重复执行平台同步。Compose 中仅 `scheduler` 设置 `APP_SCHEDULER_ENABLED=true`。
+
+### PostgreSQL 版本说明
+
+当前 Compose 使用 PostgreSQL 14。PostgreSQL 17 创建的数据卷不能直接挂载给 PostgreSQL 14，PostgreSQL 不支持数据目录原地降级。应先在 PostgreSQL 17 环境使用 `pg_dump -Fc` 导出自定义格式备份，再创建新的 PostgreSQL 14 数据卷并通过 `pg_restore` 恢复；如果导出的是纯 SQL 文件，则使用 `psql` 导入。确认逻辑备份和恢复结果前不要删除原数据卷。
+
+## 配置说明
+
+所有生产凭据均应通过环境变量或受控密钥系统提供，不要写入源码、README 或提交到 Git。
+
+### 应用与数据库
+
+| 环境变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `DB_URL` | `jdbc:postgresql://localhost:5432/backup_manager` | JDBC 地址 |
+| `DB_USER` | `backup_manager` | 数据库用户 |
+| `DB_PASSWORD` | 空 | 数据库密码；Compose 中必填 |
+| `BOOTSTRAP_ADMIN_USER` | 空 | 空用户表首次启动时创建的管理员 |
+| `BOOTSTRAP_ADMIN_PASSWORD` | 空 | 首个管理员密码，至少 12 位 |
+| `COOKIE_SECURE` | `false` | HTTPS 部署时设为 `true` |
+| `APP_SCHEDULER_ENABLED` | `false` | 是否启用自动同步 |
+| `BACKUP_SYNC_CRON` | `0 0 6 * * *` | Spring Cron，北京时间每天 06:00 |
+| `APP_DEMO_SEED` | `false` | 仅 `local` Profile 生效的演示数据开关 |
+| `APP_PORT` | `8080` | Compose 前端发布端口 |
+
+会话默认有效期为 12 小时。`BOOTSTRAP_ADMIN_*` 只在 `app_user` 为空时使用，已有用户时不会覆盖现有密码。
+
+### 日备接口
+
+| 环境变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `BACKUP_DAILY_URL` | 空 | 日备 POST 接口完整地址 |
+| `BACKUP_DAILY_TOKEN` | 空 | Bearer Token |
+| `BACKUP_DAILY_DATA_PATH` | 自动识别 | 返回 JSON 中列表的点分路径，如 `data.items` |
+| `BACKUP_DAILY_PAGE_SIZE` | `20000` | 每页数量，范围 1–20000 |
+| `BACKUP_DAILY_MAX_PAGES` | `100` | 最大页数，范围 1–1000 |
+
+### OceanProtect
+
+| 环境变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `OCEANPROTECT_BASE_URL` | 空 | 平台根地址，不包含 `/v1` |
+| `OCEANPROTECT_USERNAME` | 空 | 平台账号 |
+| `OCEANPROTECT_PASSWORD` | 空 | 平台密码 |
+| `OCEANPROTECT_AUTH_TYPE` | `STORAGE_SYSTEM` | 认证类型 |
+| `OCEANPROTECT_USER_TYPE` | `common` | 用户类型 |
+| `OCEANPROTECT_LANGUAGE` | `1` | 语言编号，允许 1 或 2 |
+| `OCEANPROTECT_PAGE_SIZE` | `100` | 副本每页数量，范围 1–199 |
+| `OCEANPROTECT_SLA_PAGE_SIZE` | `100` | SLA 每页数量，范围 1–1000 |
+| `OCEANPROTECT_MAX_PAGES` | `1000` | 单次分页上限，范围 1–10000 |
+
+## 备份平台同步
+
+### 日备平台
+
+系统从第 1 页开始向 `BACKUP_DAILY_URL` 发送 POST 请求：
 
 ```json
 {
-  "java.jdt.ls.java.home": "C:\\path\\to\\jdk-21",
-  "java.configuration.runtimes": [
-    {
-      "name": "JavaSE-1.8",
-      "path": "C:\\path\\to\\jdk-8",
-      "default": true
-    }
-  ]
+  "pageIndex": 1,
+  "pageSize": 20000,
+  "customParams": {}
 }
 ```
 
-增加或修改持久化功能时，先修改对应的 `*Mapper.java` 方法签名和 `mapper/*Mapper.xml` SQL；如果表结构发生变化，再分别为正式库和本地库新增同版本号的 Flyway 迁移。不要直接改已经执行过的历史迁移脚本，否则已部署数据库会出现校验不一致。
+请求头使用 `Authorization: Bearer <BACKUP_DAILY_TOKEN>`。每条记录至少需要：
 
-## 日备接口
+- `dbname`：数据库名；
+- `status`：备份状态；
+- `time`：记录更新时间。
 
-向 `BACKUP_DAILY_URL` POST `{"pageIndex":1,"pageSize":20000,"customParams":{}}`，Bearer 令牌从环境变量读取。支持顶层 JSON 数组及常见 `data.records`、`data.rows`、`data.list` 等结构；如果返回列表在其他位置，用 `BACKUP_DAILY_DATA_PATH` 指定，如 `data.items`。系统逐页读取到空页，并检查重复分页。
+系统支持顶层数组，以及 `data.records`、`data.rows`、`data.list`、`data`、`records`、`rows`、`list`、`result.records`、`result.rows`、`result.list`。若实际列表位于其他路径，设置 `BACKUP_DAILY_DATA_PATH`。
 
-## OceanProtect 月备/年备接口
+同步遇到空页时正常结束；如果平台重复返回相同页面，系统会停止并记录错误，避免无限拉取。
 
-系统按 OceanProtect 文档执行以下调用链：
+### OceanProtect 月备与年备
 
-1. `POST /v1/auth/token` 获取 `X-Auth-Token`。
-2. 从 0 页开始分页调用 `GET /v1/slas`，解析 `policy_list[].schedule.trigger_action`，找出 `month` 和 `year` 策略。
-3. 对每个匹配的 SLA 名称调用 `GET /v1/copies`，使用 URL 编码后的 `conditions=%sla_name%:<名称>`，每页默认 100 条且严格小于 200。
-4. 从副本读取 `resource_name`、`uuid`、`display_timestamp`、`status`、`generated_by` 和字符串形式的 `sla_properties`。只接受 `generated_by=sla/Backup` 且未标记归档或复制的备份副本；明确属于复制、归档等非备份策略的数据会被跳过。
-5. 只有副本属性能唯一对应一个月备或年备调度时才按 `monthly`、`yearly` 幂等写入。同一 SLA 中存在多个备份调度且副本没有指出来源策略时，会记入同步结果的“策略类型不明确”数量，不会靠 SLA 名称猜测并误报规则达标。
+同步过程如下：
 
-需要配置：
+1. `POST /v1/auth/token` 获取 `X-Auth-Token`；
+2. 从第 0 页分页调用 `GET /v1/slas`，识别 `policy_list[].schedule.trigger_action` 为 `month` 或 `year` 的 SLA；
+3. 按 SLA 名称调用 `GET /v1/copies`；
+4. 解析 `resource_name`、`uuid`、`display_timestamp`、`status`、`sla_name`、`generated_by` 和 `sla_properties`；
+5. 将能唯一识别为月备或年备的副本幂等写入。
 
-```text
-OCEANPROTECT_BASE_URL=https://oceanprotect-host:25081
-OCEANPROTECT_USERNAME=...
-OCEANPROTECT_PASSWORD=...
-OCEANPROTECT_AUTH_TYPE=STORAGE_SYSTEM
-OCEANPROTECT_USER_TYPE=common
-OCEANPROTECT_LANGUAGE=1
-OCEANPROTECT_PAGE_SIZE=100
-OCEANPROTECT_SLA_PAGE_SIZE=100
-OCEANPROTECT_MAX_PAGES=1000
+`generated_by` 接受 `sla` 或 `backup`（不区分大小写），归档或复制副本会被排除。`available` 状态入库时转换为 `successed`。如果同一 SLA 包含多个备份调度而副本无法关联到具体调度，系统会把它计为“策略类型不明确”，不会根据 SLA 名称猜测。
+
+分页请求收到 401 或 403 时会重新认证并重试一次。同步前仍需与真实平台确认 Endpoint、证书、服务账号、字段枚举，以及 `resource_name` 是否与本系统数据库名一致且唯一。
+
+自动调度使用 `Asia/Shanghai` 时区，在同一个调度周期中分别执行已配置的日备和 OceanProtect 同步。管理员也可以在“同步记录”页面分别手动执行。
+
+## 主要 API
+
+除健康检查、获取 CSRF Token 和登录外，`/api/**` 都需要登录；`/api/admin/**` 仅允许管理员。修改请求受 CSRF 保护，浏览器客户端需要先读取 `/api/auth/csrf`，并把 Token 放入 `X-XSRF-TOKEN` 请求头。
+
+| 方法 | 路径 | 权限 | 用途 |
+| --- | --- | --- | --- |
+| `GET` | `/actuator/health` | 公开 | 健康检查 |
+| `GET` | `/api/auth/csrf` | 公开 | 获取 CSRF Token |
+| `POST` | `/api/auth/login` | 公开 | 表单登录，字段为 `username`、`password` |
+| `GET` | `/api/auth/me` | 登录 | 当前用户和管理员标识 |
+| `POST` | `/api/auth/logout` | 登录 | 退出登录 |
+| `GET` | `/api/dashboard` | 登录 | 仪表盘汇总 |
+| `GET` | `/api/databases?q=` | 登录 | 数据库列表；`q` 仅按数据库名模糊查询 |
+| `GET` | `/api/databases/{id}` | 登录 | 数据库详情 |
+| `GET` | `/api/databases/{id}/coverage` | 登录 | 日/月/年计划矩阵 |
+| `GET` | `/api/backups` | 登录 | 备份查询，支持 `databaseId`、`date`、`from`、`to`、`kind`、`status`、`page`、`size` |
+| `GET` | `/api/calendar?year=&month=` | 登录 | 月度备份数量 |
+| `GET` | `/api/rules` | 登录 | 规则列表 |
+| `GET` | `/api/checks?databaseId=&from=&to=` | 登录 | 指定数据库规则检查，起止日期跨度不超过 366 天 |
+| `GET` | `/api/sync-runs` | 登录 | 最近 50 次同步记录 |
+| `POST` | `/api/admin/databases` | 管理员 | 登记数据库 |
+| `PUT` | `/api/admin/databases/{id}/metadata` | 管理员 | 更新资产信息 |
+| `PUT` | `/api/admin/rules/{id}` | 管理员 | 更新规则 |
+| `POST` | `/api/admin/sync/daily` | 管理员 | 立即同步日备 |
+| `POST` | `/api/admin/sync/oceanprotect` | 管理员 | 立即同步月备和年备 |
+| `GET` | `/api/admin/users` | 管理员 | 用户列表 |
+| `POST` | `/api/admin/users` | 管理员 | 创建用户 |
+
+## 构建与测试
+
+### 后端
+
+Windows：
+
+```powershell
+.\mvnw.cmd test
+.\mvnw.cmd clean package
 ```
 
-平台使用内部 HTTPS 证书时，应把 CA 或服务器证书导入运行后端的 JVM truststore，不要关闭 TLS 校验。密码和 Token 不写日志、不写数据库、不返回给前端。
+Linux 或 macOS：
 
-**真实联调仍需确认：**实际 Endpoint、服务账号、证书、脱敏的 SLA/Copy 响应；`resource_name` 是否就是项目中的逻辑数据库名且在所有平台实例中唯一；OceanProtect 完整状态枚举和 `generated_by` 实际取值；同一 SLA 含多个备份调度时是否有可关联到具体策略的副本字段；平台的 `days_of_month` 是否为 1、`days_of_year` 是否为 12 月 31 日。确认首次同步结果后，再在规则页启用月备和年备检查。
+```bash
+./mvnw test
+./mvnw clean package
+```
 
-**其他待补资料：**日备接口的脱敏 JSON、独立备份日期和任务 ID、库列表接口，以及触发备份接口。当前管理员可手动登记无备份数据库。日备 HTTP 接口只应在可信内网或加密通道中传输令牌。
+后端测试包括：
+
+- MyBatis 与 Flyway 的 H2 集成测试；
+- 日备响应结构、字段和时间解析；
+- 规则到期日、宽限期、状态和单记录单格匹配；
+- OceanProtect 认证、分页、Token 刷新、SLA 分类和副本入库；
+- 同步失败记录及数据库自动登记。
+
+### 前端
+
+```powershell
+Set-Location frontend
+pnpm install --frozen-lockfile
+pnpm build
+```
+
+前端当前提供 `dev` 和 `build` 脚本，没有独立测试脚本。
+
+## 旧 H2 2.3 数据迁移
+
+`scripts/migrate-local-h2-2.3-to-2.2.ps1` 只用于把**最后由 H2 2.3.232 打开的旧本地文件库**迁移到项目当前使用的 H2 2.2.224。新建数据库、已经迁移过的数据库以及 PostgreSQL 都不能运行该脚本。
+
+迁移前必须：
+
+1. 停止后端和所有 H2 工具；
+2. 确认源文件确实来自 H2 2.3.232；
+3. 准备 Java 11 或更高版本用于导出，以及 JDK 8 或更高版本用于导入；
+4. 保留足够空间存放导出文件和原库备份。
+
+默认迁移 `data/backup_manager.mv.db`：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\migrate-local-h2-2.3-to-2.2.ps1 -ConfirmLegacyH2
+```
+
+脚本会先用 H2 2.3.232 完整导出，创建带毫秒时间戳的原文件备份，再用 H2 2.2.224 导入并重新打开校验。任一步失败时会尝试删除未完成的新库并恢复原文件。
+
+Spring Boot 3 与 Spring Boot 2.7 的会话序列化格式不兼容，因此脚本会清空 `SPRING_SESSION` 和 `SPRING_SESSION_ATTRIBUTES`；用户、数据库、备份和规则等业务数据保持不变，迁移后所有用户需要重新登录。确认应用和数据正常前，不要删除 `*.before-h2-2.2.224.*.mv.db` 备份。
+
+脚本会自动查找 Java 和两个 H2 Jar。自动查找失败时，可通过 `-SourceH2Jar`、`-TargetH2Jar`、`-SourceJavaPath`、`-TargetJavaPath` 和 `-DatabaseBasePath` 传入**绝对路径**。
+
+## 部署与安全建议
+
+- 正式环境使用 HTTPS 反向代理，并设置 `COOKIE_SECURE=true`。
+- 本系统使用 BCrypt 保存密码，使用 JDBC 共享会话，并为修改请求启用 CSRF 防护。
+- `.env`、`.local-credentials`、Token 和平台密码不得提交到代码仓库或写入日志。
+- 内部 HTTPS 平台使用自签发证书时，将 CA 或服务器证书导入后端 JVM truststore，不要关闭 TLS 校验。
+- 只运行一个调度器实例；多个 Web 后端可以共享 PostgreSQL 和登录会话。
+- 定期备份 PostgreSQL，并演练 `pg_restore`。
+- 生产环境首次同步后，核对数据库名称映射、备份日期、状态枚举和同步计数，再启用月备、年备规则。
+
+## 常见问题
+
+### 后端提示找不到 JAR
+
+先执行：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-backend.ps1
+```
+
+`run-local-backend.ps1` 只负责运行 `target/` 中已有的最新 JAR。
+
+### 构建使用了错误的 Java 版本
+
+执行 `java -version`，并确认 `BACKUP_MANAGER_JAVA_HOME` 或 `JAVA_HOME` 指向 JDK 8。VS Code Java Language Server 可以使用较新 JDK，但项目编译和运行时必须使用 JDK 8；`pom.xml` 中的目标版本为 `1.8`。
+
+### 空数据库启动失败，提示设置管理员账号
+
+设置非空的 `BOOTSTRAP_ADMIN_USER`，并提供至少 12 位且不以 `replace-` 开头的 `BOOTSTRAP_ADMIN_PASSWORD`。用户表中已有账号时，这两个变量不会重置密码。
+
+### 月备或年备全部显示灰色
+
+两类规则默认关闭。先完成真实接口同步并核对结果，再由管理员在规则页面启用。规则关闭时灰色表示“未核验”。
+
+### 成功日备仍显示“日期待核”
+
+检查上游记录是否包含 `backupDate`、`backup_date` 或 `date`。仅有记录更新时间 `time` 时，系统不会把推定日期作为确认成功。
+
+### 同步提示无法识别返回列表
+
+确认接口返回 JSON；如果列表不在系统内置路径中，将它的点分路径写入 `BACKUP_DAILY_DATA_PATH`，例如 `data.items`。
+
+### OceanProtect HTTPS 握手失败
+
+将平台 CA 或服务器证书导入运行后端的 JVM truststore，并检查证书域名、有效期及系统时间。不要通过关闭证书校验解决。
+
+### Docker 升级后 PostgreSQL 无法启动
+
+先检查 `postgres_data` 最初由哪个 PostgreSQL 主版本创建。不同主版本的数据目录不能直接互用，使用对应旧版本启动并通过 `pg_dump`、`pg_restore` 进行逻辑迁移。
+
+### API 返回 403
+
+管理员接口需要 `ADMIN` 角色。对于 POST、PUT 等修改请求，还必须先调用 `/api/auth/csrf`，携带会话 Cookie，并发送 `X-XSRF-TOKEN` 请求头。
