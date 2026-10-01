@@ -112,6 +112,25 @@ class OceanProtectClientTests {
     }
 
     @Test
+    void monthlyFetchIncludesOtherCurrentSlaKindsToFindHistoricalMonthlyCopies() throws Exception {
+        OceanProtectClient client = client();
+        List<JsonNode> deliveredCopies = new ArrayList<>();
+
+        OceanProtectClient.FetchSummary summary = client.fetchCopies("monthly", deliveredCopies::add);
+
+        assertEquals(2, summary.fetched());
+        assertEquals(2, summary.slaCount());
+        assertEquals(listOf("monthly-copy-0", "monthly-copy-1"),
+            deliveredCopies.stream().map(item -> item.path("uuid").asText()).collect(Collectors.toList()));
+        assertTrue(copyCalls.stream().anyMatch(call ->
+            ("%sla_name%:" + MONTHLY_SLA).equals(call.query().get("conditions"))));
+        assertTrue(copyCalls.stream().anyMatch(call ->
+            ("%sla_name%:" + YEARLY_SLA).equals(call.query().get("conditions"))));
+        assertFalse(copyCalls.isEmpty());
+        assertTrue(handlerFailures.isEmpty(), () -> "HTTP handler failures: " + handlerFailures);
+    }
+
+    @Test
     void retriesAnUnauthorizedCopiesRequestOnlyOnceAfterReauthentication() {
         rejectEveryCopy = true;
         OceanProtectClient client = client();

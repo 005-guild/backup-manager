@@ -110,12 +110,22 @@ class OceanProtectClient {
     }
 
     FetchSummary fetchCopies(CopyConsumer consumer) throws Exception {
+        return fetchCopies(null, consumer);
+    }
+
+    /** Current SLA schedules may differ from historical copies, so filter the copy itself downstream. */
+    FetchSummary fetchCopies(String kind, CopyConsumer consumer) throws Exception {
         validateConfiguration();
+        if (kind != null && !OceanProtectParser.MONTHLY.equals(kind)
+                && !OceanProtectParser.YEARLY.equals(kind)) {
+            throw new IllegalArgumentException("备份类型无效");
+        }
         TokenSession session = new TokenSession(authenticate());
         Set<String> slaNames = new LinkedHashSet<>();
 
         PageSummary slaSummary = readPages("/v1/slas", slaPageSize, session, item -> {
-            if (OceanProtectParser.kindsFromSla(item, mapper).isEmpty()) return;
+            Set<String> kinds = OceanProtectParser.kindsFromSla(item, mapper);
+            if (kinds.isEmpty()) return;
             String name = item.path("name").asText("").trim();
             if (!name.isEmpty()) slaNames.add(name);
         });

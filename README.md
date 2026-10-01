@@ -63,7 +63,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-local-fron
 - 按数据库、日期范围、备份类型和状态查询历史备份记录。
 - 备份日历，按月查看每天的备份数量和明细。
 - 日备、月备、年备计划矩阵及缺失检查。
-- 日备平台分页同步，以及 OceanProtect 月备、年备副本同步。
+- 日备每天 00:00、月备每天 00:30、年备每天 01:00 分别同步备份元数据并持久化。
+- 日备每周、月备每年清理超出保留期的本地记录；年备记录永久保留。
 - 自动调度和管理员手动同步，保留同步批次、计数及错误信息。
 - 管理员配置规则、登记数据库、维护资产信息和创建用户。
 - 仪表盘展示最近 7 天的缺失、待完成和日期待核记录。
@@ -71,7 +72,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-local-fron
 当前功能边界：
 
 - 备份触发接口尚未接入。
-- `retention_days` 是页面展示和规则核验窗口，不会删除备份平台上的文件。
+- `retention_days` 用于规则核验窗口和本地 `backup_record` 元数据保留期限。定时清理不会删除备份平台上的文件。
 - `DBLIST` 返回的有效资产会进入数据库目录，因此即使尚无备份记录也能显示在检查范围内；没有出现在资产接口中的数据库仍可由管理员登记。
 - 系统根据接口元数据判断备份是否满足规则；实际备份文件是否仍存在，需要上游提供当前备份清单或文件核验接口。
 
@@ -259,7 +260,11 @@ docker compose up -d --scale backend=2
 | `BOOTSTRAP_ADMIN_PASSWORD` | 空 | 首个管理员密码，至少 12 位 |
 | `COOKIE_SECURE` | `false` | HTTPS 部署时设为 `true` |
 | `APP_SCHEDULER_ENABLED` | `false` | 是否启用自动同步 |
-| `BACKUP_SYNC_CRON` | `0 0 6 * * *` | Spring Cron，北京时间每天 06:00 |
+| `BACKUP_DAILY_CRON` | `0 0 0 * * *` | 日备同步，每天 00:00 |
+| `BACKUP_MONTHLY_CRON` | `0 30 0 * * *` | 月备同步，每天 00:30 |
+| `BACKUP_YEARLY_CRON` | `0 0 1 * * *` | 年备同步，每天 01:00 |
+| `BACKUP_DAILY_CLEANUP_CRON` | `0 0 2 * * SUN` | 日备元数据清理，每周日 02:00 |
+| `BACKUP_MONTHLY_CLEANUP_CRON` | `0 0 3 1 1 *` | 月备元数据清理，每年 1 月 1 日 03:00 |
 | `DBAAS_ASSET_CRON` | `0 0 0 * * *` | 资产同步 Spring Cron，北京时间每天 00:00 |
 | `APP_DEMO_SEED` | `false` | 仅 `local` Profile 生效的演示数据开关 |
 | `APP_PORT` | `8080` | Compose 前端发布端口 |
@@ -339,7 +344,7 @@ docker compose up -d --scale backend=2
 
 系统支持顶层数组，以及 `data.records`、`data.rows`、`data.list`、`data`、`records`、`rows`、`list`、`result.records`、`result.rows`、`result.list`。若实际列表位于其他路径，设置 `BACKUP_DAILY_DATA_PATH`。
 
-同步遇到空页时正常结束；如果平台重复返回相同页面，系统会停止并记录错误，避免无限拉取。
+同步遇到空页时正常结束；如果平台重复返回相同页面，系统会停止并记录错误，避免无限拉取。超过日备保留窗口的旧记录不会再次写入本地表。
 
 ### OceanProtect 月备与年备
 
@@ -349,13 +354,19 @@ docker compose up -d --scale backend=2
 2. 从第 0 页分页调用 `GET /v1/slas`，识别 `policy_list[].schedule.trigger_action` 为 `month` 或 `year` 的 SLA；
 3. 按 SLA 名称调用 `GET /v1/copies`；
 4. 解析 `resource_name`、`uuid`、`display_timestamp`、`status`、`sla_name`、`generated_by` 和 `sla_properties`；
-5. 将能唯一识别为月备或年备的副本幂等写入。
+5. 根据每条副本自身的 `sla_properties` 分类；00:30 的任务只写月备，01:00 的任务只写年备。
 
 `generated_by` 接受 `sla` 或 `backup`（不区分大小写），归档或复制副本会被排除。`available` 状态入库时转换为 `successed`。如果同一 SLA 包含多个备份调度而副本无法关联到具体调度，系统会把它计为“策略类型不明确”，不会根据 SLA 名称猜测。
 
+两次任务都会读取当前包含月备或年备计划的 SLA 副本，再按副本中的历史策略分类。这样 SLA 后来从月备改为年备时，旧月备副本仍有机会被识别，不会只依据当前 SLA 类型排除。
+
 分页请求收到 401 或 403 时会重新认证并重试一次。同步前仍需与真实平台确认 Endpoint、证书、服务账号、字段枚举，以及 `resource_name` 是否与本系统数据库名一致且唯一。
 
-自动调度使用 `Asia/Shanghai` 时区：资产同步默认每天 00:00 执行，日备和 OceanProtect 同步按 `BACKUP_SYNC_CRON` 默认每天 06:00 执行。管理员也可以在“同步记录”页面分别手动执行。
+自动调度使用 `Asia/Shanghai` 时区：资产和日备均在每天 00:00 启动，月备在 00:30 启动，年备在 01:00 启动。调度线程池允许资产与日备同时运行。管理员可以在“同步记录”页面分别手动执行。旧变量 `BACKUP_SYNC_CRON` 不再生效，请改用三个独立的 Cron 变量。
+
+### 本地备份记录清理
+
+系统仅清理 PostgreSQL 或 H2 中的 `backup_record` 元数据，不调用平台删除备份文件。清理按 `backup_date` 判断，保留天数读取 `backup_rule.retention_days`：默认日备 7 天、月备 365 天；年备不清理。日备清理默认每周日 02:00 运行，月备清理默认每年 1 月 1 日 03:00 运行。两次清理之间，已过期的旧记录可能暂时仍留在表内；后续同步不会重新导入超出当前保留窗口的旧记录。
 
 ## 主要 API
 
@@ -383,8 +394,10 @@ docker compose up -d --scale backend=2
 | `PUT` | `/api/admin/databases/{id}/metadata` | 管理员 | 更新资产信息 |
 | `PUT` | `/api/admin/rules/{id}` | 管理员 | 更新规则 |
 | `POST` | `/api/admin/sync/daily` | 管理员 | 立即同步日备 |
+| `POST` | `/api/admin/sync/monthly` | 管理员 | 立即同步月备 |
+| `POST` | `/api/admin/sync/yearly` | 管理员 | 立即同步年备 |
 | `POST` | `/api/admin/sync/assets` | 管理员 | 立即同步 DBAAS 数据库资产 |
-| `POST` | `/api/admin/sync/oceanprotect` | 管理员 | 立即同步月备和年备 |
+| `POST` | `/api/admin/sync/oceanprotect` | 管理员 | 兼容旧客户端，一次同步月备和年备 |
 | `GET` | `/api/admin/users` | 管理员 | 用户列表 |
 | `POST` | `/api/admin/users` | 管理员 | 创建用户 |
 
@@ -413,6 +426,7 @@ Linux 或 macOS：
 - 日备响应结构、字段和时间解析；
 - 规则到期日、宽限期、状态和单记录单格匹配；
 - OceanProtect 认证、分页、Token 刷新、SLA 分类和副本入库；
+- 三类备份独立调度及本地保留期清理的日期边界；
 - 同步失败记录及数据库自动登记。
 
 ### 前端

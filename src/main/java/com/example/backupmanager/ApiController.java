@@ -153,6 +153,8 @@ public class ApiController {
         RuleRow rule = catalog.rules().stream().filter(r -> r.id() == id).findFirst()
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "规则不存在"));
         if (input.getGraceDays() < 0 || input.getGraceDays() > 30 || (input.getRetentionDays() != null && (input.getRetentionDays() < 1 || input.getRetentionDays() > 36500))) throw new IllegalArgumentException("规则数值无效");
+        if (!"yearly".equals(rule.kind()) && input.getRetentionDays() == null)
+            throw new IllegalArgumentException("日备和月备必须设置保留天数");
         catalog.updateRule(id, input.isEnabled(), input.getGraceDays(), input.getRetentionDays());
         return catalog.rules().stream().filter(r -> r.id() == id).findFirst()
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "规则不存在"));
@@ -166,6 +168,8 @@ public class ApiController {
     }
     @GetMapping("/sync-runs") List<SyncRow> syncRuns() { return catalog.syncRuns(50); }
     @PostMapping("/admin/sync/daily") Map<String, Object> syncDaily() { return sync.syncDaily(); }
+    @PostMapping("/admin/sync/monthly") Map<String, Object> syncMonthly() { return sync.syncMonthly(); }
+    @PostMapping("/admin/sync/yearly") Map<String, Object> syncYearly() { return sync.syncYearly(); }
     @PostMapping("/admin/sync/oceanprotect") Map<String, Object> syncOceanProtect() { return sync.syncOceanProtect(); }
     @PostMapping("/admin/sync/assets") Map<String, Object> syncAssets() { return assetSync.syncAssets(); }
     @GetMapping("/admin/users") List<Map<String, Object>> users() { return catalog.users(); }

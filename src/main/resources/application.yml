@@ -12,6 +12,10 @@ spring:
     timeout: 12h
   flyway:
     enabled: true
+  task:
+    scheduling:
+      pool:
+        size: 4
 mybatis:
   mapper-locations: classpath*:mapper/*.xml
   configuration:
@@ -50,7 +54,11 @@ app:
   oceanprotect-page-size: ${OCEANPROTECT_PAGE_SIZE:100}
   oceanprotect-sla-page-size: ${OCEANPROTECT_SLA_PAGE_SIZE:100}
   oceanprotect-max-pages: ${OCEANPROTECT_MAX_PAGES:1000}
-  sync-cron: ${BACKUP_SYNC_CRON:0 0 6 * * *}
+  daily-sync-cron: ${BACKUP_DAILY_CRON:0 0 0 * * *}
+  monthly-sync-cron: ${BACKUP_MONTHLY_CRON:0 30 0 * * *}
+  yearly-sync-cron: ${BACKUP_YEARLY_CRON:0 0 1 * * *}
+  daily-cleanup-cron: ${BACKUP_DAILY_CLEANUP_CRON:0 0 2 * * SUN}
+  monthly-cleanup-cron: ${BACKUP_MONTHLY_CLEANUP_CRON:0 0 3 1 1 *}
   scheduler-enabled: ${APP_SCHEDULER_ENABLED:false}
   admin-user: ${BOOTSTRAP_ADMIN_USER:}
   admin-password: ${BOOTSTRAP_ADMIN_PASSWORD:}

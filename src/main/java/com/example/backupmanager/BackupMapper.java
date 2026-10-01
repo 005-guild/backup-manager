@@ -27,4 +27,5 @@ interface BackupMapper {
     long countBySource(@Param("kind") String kind, @Param("externalId") String externalId);
     int update(BackupWrite record);
     int insert(BackupWrite record);
+    int deleteOlderThan(@Param("kind") String kind, @Param("cutoff") LocalDate cutoff);
 }
