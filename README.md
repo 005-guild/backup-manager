@@ -2,7 +2,7 @@
 
 一个用于汇总数据库资产、同步备份平台记录并按策略检查备份完整性的 Web 系统。后端使用 **JDK 8、Spring Boot 2.7 和 MyBatis**，前端使用 **React**；本地演示使用 H2 文件数据库，正式部署使用 PostgreSQL 14。
 
-系统目前管理备份**元数据和规则检查结果**，不保存备份文件本身。日备平台以及 OceanProtect 月备、年备接口已经接入；触发备份接口尚未实现。
+系统目前管理数据库资产、备份**元数据和规则检查结果**，不保存备份文件本身。数据库资产来自 DBAAS 的 `DBLIST` 接口，备份记录来自日备平台及 OceanProtect；触发备份接口尚未实现。
 
 ## 5 分钟本地运行
 
@@ -44,6 +44,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-local-fron
 
 打开 <http://127.0.0.1:5173/>。后端监听 `127.0.0.1:8080`，Vite 会把 `/api` 和 `/actuator` 转发到后端。
 
+本地脚本不会自动读取 `.env`。需要连接 DBAAS 时，在启动后端的 PowerShell 窗口先设置 `DBAAS_ASSET_URL` 和 `DBAAS_ASSET_TOKEN` 环境变量；仅查看演示数据时可以不配置。
+
 首次启动时，本地脚本会：
 
 1. 创建随机管理员密码并写入根目录的 `.local-credentials`；
@@ -55,7 +57,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-local-fron
 ## 已实现功能
 
 - 多用户登录，支持 `ADMIN` 和 `VIEWER` 两种角色，登录会话存放在数据库中。
-- 数据库资产列表、前端资产多字段搜索、框架及监控状态筛选、分页浏览；后端 `q` 参数仅按数据库名模糊查询。
+- 数据库资产列表、服务端多字段搜索、框架及监控状态筛选、分页浏览，适合数万条资产。
+- DBAAS `DBLIST` 数据库资产分页同步，每天北京时间 00:00 定时拉取，也支持管理员手动同步。
 - 数据库详情与资产信息维护，包括 DBID、标签、等级、框架、版本、子系统、开发人员、DBA、服务单元和建库日期。
 - 按数据库、日期范围、备份类型和状态查询历史备份记录。
 - 备份日历，按月查看每天的备份数量和明细。
@@ -69,7 +72,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-local-fron
 
 - 备份触发接口尚未接入。
 - `retention_days` 是页面展示和规则核验窗口，不会删除备份平台上的文件。
-- 如果上游只有备份记录接口而没有独立数据库清单，完全没有备份记录的数据库只能通过管理员登记，或在后续接入库清单接口后自动导入。
+- `DBLIST` 返回的有效资产会进入数据库目录，因此即使尚无备份记录也能显示在检查范围内；没有出现在资产接口中的数据库仍可由管理员登记。
 - 系统根据接口元数据判断备份是否满足规则；实际备份文件是否仍存在，需要上游提供当前备份清单或文件核验接口。
 
 ## 技术栈
@@ -97,7 +100,7 @@ flowchart LR
     C --> SS[Spring Session JDBC]
     SS --> D
     SCH[单个调度器实例] --> S
-    S --> P[日备平台 / OceanProtect]
+    S --> P[DBAAS DBLIST / 日备平台 / OceanProtect]
 ```
 
 `CatalogRepository` 是业务层的持久化门面，负责数据库自动登记、备份幂等写入和同步记录主键回填。SQL 位于 `src/main/resources/mapper/`，项目不使用 JPA，业务类中也没有直接编写 `JdbcTemplate` SQL。
@@ -116,6 +119,7 @@ backup-manager/
 ├─ src/main/java/com/example/backupmanager/
 │  ├─ ApiController.java          HTTP API
 │  ├─ BackupSyncService.java      日备与 OceanProtect 同步、定时任务
+│  ├─ DbaasAssetSyncService.java  DBAAS 资产同步与 0 点调度
 │  ├─ RuleService.java            指定日期范围的规则检查
 │  ├─ CoverageService.java        详情页计划矩阵计算
 │  ├─ CatalogRepository.java      业务持久化门面
@@ -140,12 +144,15 @@ backup-manager/
 | --- | --- | --- |
 | `app_user` | 应用账号 | `username`、BCrypt `password_hash`、`role`、`enabled` |
 | `database_catalog` | 数据库资产和监控起点 | `name`、`monitor_from`、`active` 及各资产字段 |
+| `dbaas_asset` | DBAAS 资产原始记录 | `external_id`、`db_name`、`logicdb_code`、`ldbid`、`valid`、`raw_data`、`last_seen_run_id`、首次及最近同步时间 |
 | `backup_record` | 上游备份记录 | `database_id`、`kind`、`external_id`、`backup_date`、`date_inferred`、`event_time`、`status`、`raw_data` |
 | `backup_rule` | 三类规则 | `kind`、`enabled`、`grace_days`、`retention_days` |
 | `sync_run` | 同步批次 | `kind`、开始/结束时间、状态、拉取数、保存数和错误信息 |
 | `SPRING_SESSION*` | 登录会话 | Spring Session JDBC 标准字段 |
 
 `backup_record` 通过 `(kind, external_id)` 唯一约束实现同一上游记录的幂等更新。平台凭据不会写入这些表；`raw_data` 保存单条备份记录的原始 JSON，便于追踪字段来源。
+
+`dbaas_asset.external_id` 对应 DBLIST 的 `ID`，重复同步会更新同一资产的原始 JSON 和最近同步时间。资产通过 `DBNAME` 与 `database_catalog.name` 对应，并将上游 `ID` 绑定到 `asset_external_id`；同名资产的原始记录都会保留，目录只对应其中一个 ID。`DBID`、`LEVEL`、`APP_FRAMEWORK`、`DBVERSION`、`CMBSYSCODE`、开发人员、DBA、服务单元及建库日期等字段会同步到目录。上游字段为空时保留目录中原有的对应值。完整同步后，本次未出现的资产会标记为无效，对应目录会停用；如果同名的其他有效资产仍在清单中，目录会改绑到该资产。中途失败不会将旧清单批量停用。
 
 ## 规则口径
 
@@ -198,7 +205,7 @@ Copy-Item .env.example .env
 - `BOOTSTRAP_ADMIN_USER`：首个管理员用户名；
 - `BOOTSTRAP_ADMIN_PASSWORD`：至少 12 位，且不能以 `replace-` 开头。
 
-首次启动空数据库时必须保留两个 `BOOTSTRAP_ADMIN_*` 变量。只有 `app_user` 中已有账号后，才可以删除管理员密码并重启。没有使用的备份平台配置应留空，不要保留示例占位值。
+首次启动空数据库时必须保留两个 `BOOTSTRAP_ADMIN_*` 变量。只有 `app_user` 中已有账号后，才可以删除管理员密码并重启。需要启用资产同步时，在 `.env` 中填写 `DBAAS_ASSET_URL` 和 `DBAAS_ASSET_TOKEN`；没有使用的平台配置应留空，不要保留示例占位值。Compose 的 `backend` 和 `scheduler` 服务通过 `env_file: .env` 读取这些变量。
 
 ### 2. 构建并启动
 
@@ -253,10 +260,22 @@ docker compose up -d --scale backend=2
 | `COOKIE_SECURE` | `false` | HTTPS 部署时设为 `true` |
 | `APP_SCHEDULER_ENABLED` | `false` | 是否启用自动同步 |
 | `BACKUP_SYNC_CRON` | `0 0 6 * * *` | Spring Cron，北京时间每天 06:00 |
+| `DBAAS_ASSET_CRON` | `0 0 0 * * *` | 资产同步 Spring Cron，北京时间每天 00:00 |
 | `APP_DEMO_SEED` | `false` | 仅 `local` Profile 生效的演示数据开关 |
 | `APP_PORT` | `8080` | Compose 前端发布端口 |
 
 会话默认有效期为 12 小时。`BOOTSTRAP_ADMIN_*` 只在 `app_user` 为空时使用，已有用户时不会覆盖现有密码。
+
+### DBAAS 数据库资产接口
+
+| 环境变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `DBAAS_ASSET_URL` | 空 | `DBLIST` POST 接口完整地址 |
+| `DBAAS_ASSET_TOKEN` | 空 | Bearer Token |
+| `DBAAS_ASSET_PAGE_SIZE` | `500` | 每页数量，范围 1–2000 |
+| `DBAAS_ASSET_MAX_PAGES` | `1000` | 单次最大页数，范围 1–10000 |
+
+地址或 Token 未配置时，0 点任务会跳过；管理员手动同步则会返回配置错误。Token 通过环境变量传入，不写入数据库或日志。
 
 ### 日备接口
 
@@ -282,7 +301,23 @@ docker compose up -d --scale backend=2
 | `OCEANPROTECT_SLA_PAGE_SIZE` | `100` | SLA 每页数量，范围 1–1000 |
 | `OCEANPROTECT_MAX_PAGES` | `1000` | 单次分页上限，范围 1–10000 |
 
-## 备份平台同步
+## 数据库资产与备份同步
+
+### DBAAS 数据库资产
+
+启用单个调度器实例并配置 DBAAS 环境变量后，系统默认在 `Asia/Shanghai` 时区每天 00:00 调用 `DBLIST`。请求从第 0 页开始，按 `pagination.total` 翻页，每页提交：
+
+```json
+{
+  "pageIndex": 0,
+  "pageSize": 500,
+  "customParams": { "VALID": "Y" }
+}
+```
+
+`pageIndex` 随页数增加，`pageSize` 由 `DBAAS_ASSET_PAGE_SIZE` 控制。请求头使用 `Authorization: Bearer <DBAAS_ASSET_TOKEN>` 和 `Content-Type: application/json`。响应需包含 `code: 0`、`pagination.total` 和 `data` 数组；`ID` 与 `DBNAME` 是每条资产必需字段。系统按 `ID` 更新 `dbaas_asset`，保存每条原始 JSON，再按 `DBNAME` 登记或更新 `database_catalog`。新增目录项的监控起点优先取上游 `DB_CREATE_DATE`（未来日期按同步当天处理），缺少建库日期时取同步当天；即使没有备份记录，也可纳入规则检查。
+
+同步批次以 `assets` 写入 `sync_run`，记录拉取数、新增资产数和错误。相同批次出现重复 ID、未读完资产就遇到空页或达到最大页数时，批次会标记失败。分页中途失败时，已经逐条写入的资产不会回滚，下次同步会幂等更新；旧资产的批量失效只在完整同步成功后执行。管理员可在“同步记录”页面点击“同步数据库资产”，或调用 `POST /api/admin/sync/assets` 手动执行。PostgreSQL 同步锁会阻止多实例同时执行资产同步。DBLIST 仅请求 `VALID=Y`；上游后来不再返回的资产仍保留原始记录供审计，但会在成功完成整批同步后被标记为无效。
 
 ### 日备平台
 
@@ -320,7 +355,7 @@ docker compose up -d --scale backend=2
 
 分页请求收到 401 或 403 时会重新认证并重试一次。同步前仍需与真实平台确认 Endpoint、证书、服务账号、字段枚举，以及 `resource_name` 是否与本系统数据库名一致且唯一。
 
-自动调度使用 `Asia/Shanghai` 时区，在同一个调度周期中分别执行已配置的日备和 OceanProtect 同步。管理员也可以在“同步记录”页面分别手动执行。
+自动调度使用 `Asia/Shanghai` 时区：资产同步默认每天 00:00 执行，日备和 OceanProtect 同步按 `BACKUP_SYNC_CRON` 默认每天 06:00 执行。管理员也可以在“同步记录”页面分别手动执行。
 
 ## 主要 API
 
@@ -335,6 +370,8 @@ docker compose up -d --scale backend=2
 | `POST` | `/api/auth/logout` | 登录 | 退出登录 |
 | `GET` | `/api/dashboard` | 登录 | 仪表盘汇总 |
 | `GET` | `/api/databases?q=` | 登录 | 数据库列表；`q` 仅按数据库名模糊查询 |
+| `GET` | `/api/databases/page?q=&page=0&size=20` | 登录 | 数据库分页列表，支持 `backupState`、`monitorState`、`framework` 筛选；`q` 搜索名称、DBID、资产 ID、标签、子系统、开发人员、DBA 和服务单元 |
+| `GET` | `/api/databases/frameworks` | 登录 | 已有应用框架选项 |
 | `GET` | `/api/databases/{id}` | 登录 | 数据库详情 |
 | `GET` | `/api/databases/{id}/coverage` | 登录 | 日/月/年计划矩阵 |
 | `GET` | `/api/backups` | 登录 | 备份查询，支持 `databaseId`、`date`、`from`、`to`、`kind`、`status`、`page`、`size` |
@@ -346,6 +383,7 @@ docker compose up -d --scale backend=2
 | `PUT` | `/api/admin/databases/{id}/metadata` | 管理员 | 更新资产信息 |
 | `PUT` | `/api/admin/rules/{id}` | 管理员 | 更新规则 |
 | `POST` | `/api/admin/sync/daily` | 管理员 | 立即同步日备 |
+| `POST` | `/api/admin/sync/assets` | 管理员 | 立即同步 DBAAS 数据库资产 |
 | `POST` | `/api/admin/sync/oceanprotect` | 管理员 | 立即同步月备和年备 |
 | `GET` | `/api/admin/users` | 管理员 | 用户列表 |
 | `POST` | `/api/admin/users` | 管理员 | 创建用户 |
@@ -371,6 +409,7 @@ Linux 或 macOS：
 后端测试包括：
 
 - MyBatis 与 Flyway 的 H2 集成测试；
+- DBLIST 的第 0 页起始、`VALID=Y` 过滤、分页与资产幂等落库、完整快照失效及恢复；
 - 日备响应结构、字段和时间解析；
 - 规则到期日、宽限期、状态和单记录单格匹配；
 - OceanProtect 认证、分页、Token 刷新、SLA 分类和副本入库；

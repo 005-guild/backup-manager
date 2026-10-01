@@ -19,6 +19,9 @@ interface BackupMapper {
                                   @Param("kind") String kind,
                                   @Param("from") LocalDate from,
                                   @Param("to") LocalDate to);
+    List<BackupRow> findRecentForDashboard(@Param("from") LocalDate from,
+                                            @Param("to") LocalDate to);
+    List<BackupRow> findLatestForDatabases(@Param("databaseIds") List<Long> databaseIds);
     List<Map<String, Object>> calendar(@Param("from") LocalDate from, @Param("to") LocalDate to);
     long countAll();
     long countBySource(@Param("kind") String kind, @Param("externalId") String externalId);

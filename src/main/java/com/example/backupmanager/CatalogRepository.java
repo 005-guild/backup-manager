@@ -3,6 +3,7 @@ package com.example.backupmanager;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.HashMap;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import org.springframework.dao.DuplicateKeyException;
@@ -28,6 +29,27 @@ public class CatalogRepository {
     List<DatabaseRow> databases(String search) {
         return databases.findAll("%" + search + "%");
     }
+    private static String searchPattern(String search) {
+        if (Compat.isBlank(search)) return null;
+        return "%" + search.trim().replace("!", "!!").replace("%", "!%")
+            .replace("_", "!_") + "%";
+    }
+    List<DatabaseRow> databasePage(String search, String backupState, String monitorState,
+                                   String framework, int page, int size) {
+        return databases.findPage(searchPattern(search), backupState, monitorState,
+            framework, size, page * size);
+    }
+    long databaseCount(String search, String backupState, String monitorState, String framework) {
+        return databases.countFiltered(searchPattern(search), backupState, monitorState, framework);
+    }
+    List<String> databaseFrameworks() { return databases.findFrameworks(); }
+    List<DatabaseRow> dashboardDatabases() { return databases.findDashboardActive(); }
+    List<BackupRow> dashboardBackups(LocalDate from, LocalDate to) {
+        return backups.findRecentForDashboard(from, to);
+    }
+    List<BackupRow> latestBackups(List<Long> ids) {
+        return ids.isEmpty() ? Collections.emptyList() : backups.findLatestForDatabases(ids);
+    }
     DatabaseRow database(long id) {
         return databases.findById(id);
     }
@@ -37,8 +59,7 @@ public class CatalogRepository {
             values.put("name", name);
             values.put("monitorFrom", monitorFrom);
             values.put("monitorFromAuto", false);
-            try { databases.insert(values); }
-            catch (DuplicateKeyException ignored) { /* another request added it */ }
+            databases.insert(values);
         }
         Long id = databaseIdByName(name);
         if (id == null) throw new IllegalStateException("数据库登记失败");
@@ -50,8 +71,7 @@ public class CatalogRepository {
             values.put("name", name);
             values.put("monitorFrom", firstDate);
             values.put("monitorFromAuto", true);
-            try { databases.insert(values); }
-            catch (DuplicateKeyException ignored) { /* another request added it */ }
+            databases.insert(values);
         }
         databases.moveAutomaticMonitorStart(name, firstDate);
         Long id = databaseIdByName(name);

@@ -39,6 +39,61 @@
     order by d.name
   </select>
 
+  <sql id="pageFilters">
+    <where>
+      <if test="pattern != null and pattern != ''">
+        (lower(d.name) like lower(#{pattern}) escape '!'
+        or lower(coalesce(d.dbid, '')) like lower(#{pattern}) escape '!'
+        or lower(coalesce(d.asset_external_id, '')) like lower(#{pattern}) escape '!'
+        or lower(coalesce(d.tag, '')) like lower(#{pattern}) escape '!'
+        or lower(coalesce(d.subsystem, '')) like lower(#{pattern}) escape '!'
+        or lower(coalesce(d.developer, '')) like lower(#{pattern}) escape '!'
+        or lower(coalesce(d.dba, '')) like lower(#{pattern}) escape '!'
+        or lower(coalesce(d.service_unit, '')) like lower(#{pattern}) escape '!')
+      </if>
+      <if test="monitorState == 'active'">and d.active = true</if>
+      <if test="monitorState == 'paused'">and d.active = false</if>
+      <if test="framework != null and framework != ''">and d.framework = #{framework}</if>
+      <if test="backupState == 'with'">
+        and exists (select 1 from backup_record b where b.database_id = d.id)
+      </if>
+      <if test="backupState == 'empty'">
+        and not exists (select 1 from backup_record b where b.database_id = d.id)
+      </if>
+    </where>
+  </sql>
+
+  <select id="findPage" resultMap="databaseRow">
+    select p.*,
+      (select count(*) from backup_record b where b.database_id = p.id) backup_count,
+      (select max(b.event_time) from backup_record b where b.database_id = p.id) latest_event
+    from (
+      select d.* from database_catalog d
+      <include refid="pageFilters"/>
+      order by d.name, d.id
+      limit #{limit} offset #{offset}
+    ) p
+    order by p.name, p.id
+  </select>
+
+  <select id="countFiltered" resultType="_long">
+    select count(*) from database_catalog d
+    <include refid="pageFilters"/>
+  </select>
+
+  <select id="findFrameworks" resultType="java.lang.String">
+    select distinct framework from database_catalog
+    where framework is not null and framework != ''
+    order by framework
+  </select>
+
+  <select id="findDashboardActive" resultMap="databaseRow">
+    select d.*, 0 backup_count, null latest_event
+    from database_catalog d
+    where d.active = true
+    order by d.id
+  </select>
+
   <select id="findById" resultMap="databaseRow">
     select d.*, coalesce(s.backup_count, 0) backup_count, s.latest_event
     from database_catalog d
@@ -58,6 +113,7 @@
   <insert id="insert">
     insert into database_catalog(name, monitor_from, monitor_from_auto)
     values(#{name}, #{monitorFrom}, #{monitorFromAuto})
+    on conflict do nothing
   </insert>
 
   <update id="moveAutomaticMonitorStart">
@@ -80,6 +136,24 @@
         service_unit = #{metadata.serviceUnit,jdbcType=VARCHAR},
         created_on = #{metadata.createdOn,jdbcType=DATE}
     where id = #{id}
+  </update>
+
+  <update id="bindAsset">
+    update database_catalog
+    set asset_external_id = #{asset.externalId}, active = true,
+        dbid = coalesce(#{asset.metadata.dbid,jdbcType=VARCHAR}, dbid),
+        tag = coalesce(#{asset.metadata.tag,jdbcType=VARCHAR}, tag),
+        lifecycle_status = coalesce(#{asset.metadata.lifecycleStatus,jdbcType=VARCHAR}, lifecycle_status),
+        security_tier = coalesce(#{asset.metadata.securityTier,jdbcType=VARCHAR}, security_tier),
+        framework = coalesce(#{asset.metadata.framework,jdbcType=VARCHAR}, framework),
+        db_version = coalesce(#{asset.metadata.dbVersion,jdbcType=VARCHAR}, db_version),
+        subsystem = coalesce(#{asset.metadata.subsystem,jdbcType=VARCHAR}, subsystem),
+        developer = coalesce(#{asset.metadata.developer,jdbcType=VARCHAR}, developer),
+        dba = coalesce(#{asset.metadata.dba,jdbcType=VARCHAR}, dba),
+        service_unit = coalesce(#{asset.metadata.serviceUnit,jdbcType=VARCHAR}, service_unit),
+        created_on = coalesce(#{asset.metadata.createdOn,jdbcType=DATE}, created_on)
+    where name = #{asset.dbName}
+      and (asset_external_id is null or asset_external_id = #{asset.externalId})
   </update>
 
   <update id="setDemoMonitoring">

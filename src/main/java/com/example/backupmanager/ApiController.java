@@ -4,7 +4,6 @@ import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -27,10 +26,15 @@ public class ApiController {
     private final CatalogRepository catalog;
     private final RuleService rules;
     private final CoverageService coverage;
+    private final DashboardService dashboard;
     private final BackupSyncService sync;
+    private final DbaasAssetSyncService assetSync;
     private final PasswordEncoder encoder;
-    ApiController(CatalogRepository catalog, RuleService rules, CoverageService coverage, BackupSyncService sync, PasswordEncoder encoder) {
-        this.catalog = catalog; this.rules = rules; this.coverage = coverage; this.sync = sync; this.encoder = encoder;
+    ApiController(CatalogRepository catalog, RuleService rules, CoverageService coverage,
+                  DashboardService dashboard, BackupSyncService sync,
+                  DbaasAssetSyncService assetSync, PasswordEncoder encoder) {
+        this.catalog = catalog; this.rules = rules; this.coverage = coverage; this.sync = sync;
+        this.dashboard = dashboard; this.assetSync = assetSync; this.encoder = encoder;
     }
     private static LocalDate today() { return LocalDate.now(ZoneId.of("Asia/Shanghai")); }
     private DatabaseRow requireDatabase(long id) {
@@ -41,28 +45,36 @@ public class ApiController {
 
     @GetMapping("/dashboard")
     Map<String, Object> dashboard() {
-        LocalDate today = today();
-        List<DatabaseRow> databases = catalog.databases("").stream().filter(DatabaseRow::active).collect(Collectors.toList());
-        List<Map<String, Object>> rows = new ArrayList<>();
-        int missing = 0, pending = 0, unknown = 0;
-        for (DatabaseRow database : databases) {
-            List<CheckRow> checks = rules.checks(database, today.minusDays(6), today, today);
-            long dbMissing = checks.stream().filter(c -> c.state().equals("missing")).count();
-            long dbPending = checks.stream().filter(c -> c.state().equals("pending")).count();
-            long dbUnknown = checks.stream().filter(c -> c.state().equals("unknown")).count();
-            missing += dbMissing; pending += dbPending; unknown += dbUnknown;
-            List<BackupRow> latest = catalog.backups(database.id(), null, null, "", "", 1, 0);
-            rows.add(Compat.mapOf("database", database, "latest", latest.isEmpty() ? Compat.mapOf() : latest.get(0),
-                "missing", dbMissing, "pending", dbPending, "unknown", dbUnknown));
-        }
-        rows.sort((a,b) -> Long.compare((Long)b.get("missing"), (Long)a.get("missing")));
-        List<SyncRow> runs = catalog.syncRuns(1);
-        return Compat.mapOf("databaseCount", databases.size(), "backupCount", catalog.backupCount(),
-            "missing", missing, "pending", pending, "unknown", unknown,
-            "databases", rows, "lastSync", runs.isEmpty() ? Compat.mapOf() : runs.get(0));
+        return dashboard.summary(today());
     }
 
     @GetMapping("/databases") List<DatabaseRow> databases(@RequestParam(defaultValue = "") String q) { return catalog.databases(q.trim()); }
+    @GetMapping("/databases/page")
+    Map<String, Object> databasePage(@RequestParam(defaultValue = "") String q,
+                                      @RequestParam(defaultValue = "all") String backupState,
+                                      @RequestParam(defaultValue = "") String monitorState,
+                                      @RequestParam(defaultValue = "") String framework,
+                                      @RequestParam(defaultValue = "0") int page,
+                                      @RequestParam(defaultValue = "20") int size) {
+        if (page < 0 || page > 100000 || size < 1 || size > 100)
+            throw new IllegalArgumentException("分页参数无效");
+        if (q.length() > 255 || framework.length() > 80)
+            throw new IllegalArgumentException("筛选条件过长");
+        if (!Compat.listOf("all", "with", "empty").contains(backupState)
+            || !Compat.listOf("", "active", "paused").contains(monitorState))
+            throw new IllegalArgumentException("筛选条件无效");
+        String search = q.trim();
+        long all = catalog.databaseCount(search, "all", monitorState, framework);
+        long with = catalog.databaseCount(search, "with", monitorState, framework);
+        long total = "with".equals(backupState) ? with : "empty".equals(backupState) ? all - with : all;
+        List<DatabaseRow> items = catalog.databasePage(search, backupState, monitorState, framework, page, size);
+        return Compat.mapOf("items", items, "total", total, "page", page, "size", size,
+            "hasMore", (long) page * size + items.size() < total,
+            "counts", Compat.mapOf("all", all, "with", with, "empty", all - with));
+    }
+    @GetMapping("/databases/frameworks") List<String> databaseFrameworks() {
+        return catalog.databaseFrameworks();
+    }
     @GetMapping("/databases/{id}") DatabaseRow database(@PathVariable long id) { return requireDatabase(id); }
     @GetMapping("/databases/{id}/coverage") List<CoverageGroup> coverage(@PathVariable long id) {
         return coverage.coverage(requireDatabase(id));
@@ -155,6 +167,7 @@ public class ApiController {
     @GetMapping("/sync-runs") List<SyncRow> syncRuns() { return catalog.syncRuns(50); }
     @PostMapping("/admin/sync/daily") Map<String, Object> syncDaily() { return sync.syncDaily(); }
     @PostMapping("/admin/sync/oceanprotect") Map<String, Object> syncOceanProtect() { return sync.syncOceanProtect(); }
+    @PostMapping("/admin/sync/assets") Map<String, Object> syncAssets() { return assetSync.syncAssets(); }
     @GetMapping("/admin/users") List<Map<String, Object>> users() { return catalog.users(); }
     public static class AddUser {
         private String username;

@@ -47,6 +47,33 @@
     order by b.backup_date, b.event_time, b.id
   </select>
 
+  <select id="findRecentForDashboard" resultMap="backupRow" fetchSize="1000">
+    select b.id, b.database_id, d.name database_name, b.kind, b.external_id,
+      b.backup_date, b.date_inferred, b.event_time, b.status
+    from backup_record b
+    join database_catalog d on d.id = b.database_id and d.active = true
+    where b.backup_date between #{from} and #{to}
+    order by b.database_id, b.kind, b.backup_date, b.event_time, b.id
+  </select>
+
+  <select id="findLatestForDatabases" resultMap="backupRow">
+    select ranked.id, ranked.database_id, ranked.database_name, ranked.kind,
+      ranked.external_id, ranked.backup_date, ranked.date_inferred,
+      ranked.event_time, ranked.status
+    from (
+      select b.id, b.database_id, d.name database_name, b.kind, b.external_id,
+        b.backup_date, b.date_inferred, b.event_time, b.status,
+        row_number() over (partition by b.database_id order by b.backup_date desc, b.event_time desc, b.id desc) rank_no
+      from backup_record b
+      join database_catalog d on d.id = b.database_id
+      where b.database_id in
+      <foreach collection="databaseIds" item="databaseId" open="(" separator="," close=")">
+        #{databaseId}
+      </foreach>
+    ) ranked
+    where ranked.rank_no = 1
+  </select>
+
   <select id="calendar" resultMap="calendarRow">
     select backup_date, count(*) as backup_count
     from backup_record

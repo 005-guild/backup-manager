@@ -31,6 +31,11 @@ management:
       exposure:
         include: health
 app:
+  asset-url: ${DBAAS_ASSET_URL:}
+  asset-token: ${DBAAS_ASSET_TOKEN:}
+  asset-page-size: ${DBAAS_ASSET_PAGE_SIZE:500}
+  asset-max-pages: ${DBAAS_ASSET_MAX_PAGES:1000}
+  asset-sync-cron: ${DBAAS_ASSET_CRON:0 0 0 * * *}
   daily-url: ${BACKUP_DAILY_URL:}
   daily-token: ${BACKUP_DAILY_TOKEN:}
   daily-data-path: ${BACKUP_DAILY_DATA_PATH:}

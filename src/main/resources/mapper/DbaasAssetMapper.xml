@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.backupmanager.DbaasAssetMapper">
+  <resultMap id="assetRecord" type="com.example.backupmanager.DbaasAssetRecord">
+    <constructor>
+      <arg column="external_id" javaType="java.lang.String"/>
+      <arg column="db_name" javaType="java.lang.String"/>
+      <arg column="raw_data" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <update id="update">
+    update dbaas_asset
+    set db_name = #{asset.dbName}, logicdb_code = #{asset.logicdbCode,jdbcType=VARCHAR},
+        ldbid = #{asset.ldbid,jdbcType=BIGINT}, valid = #{asset.valid,jdbcType=VARCHAR},
+        raw_data = #{asset.rawData}, last_seen_run_id = #{runId}, last_seen_at = now()
+    where external_id = #{asset.externalId}
+  </update>
+
+  <insert id="insert">
+    insert into dbaas_asset(external_id, db_name, logicdb_code, ldbid, valid, raw_data, last_seen_run_id)
+    values(#{asset.externalId}, #{asset.dbName}, #{asset.logicdbCode,jdbcType=VARCHAR},
+           #{asset.ldbid,jdbcType=BIGINT}, #{asset.valid,jdbcType=VARCHAR}, #{asset.rawData}, #{runId})
+    on conflict do nothing
+  </insert>
+
+  <update id="markUnseen">
+    update dbaas_asset set valid = 'N'
+    where last_seen_run_id &lt;&gt; #{runId} and valid &lt;&gt; 'N'
+  </update>
+
+  <update id="rebindCatalog">
+    update database_catalog d
+    set asset_external_id = (
+          select min(a.external_id) from dbaas_asset a
+          where a.db_name = d.name and a.last_seen_run_id = #{runId}
+        ), active = true
+    where d.asset_external_id is not null
+      and not exists (
+        select 1 from dbaas_asset a
+        where a.external_id = d.asset_external_id and a.db_name = d.name
+          and a.last_seen_run_id = #{runId}
+      )
+      and exists (
+        select 1 from dbaas_asset a
+        where a.db_name = d.name and a.last_seen_run_id = #{runId}
+      )
+  </update>
+
+  <update id="deactivateMissingCatalog">
+    update database_catalog d set active = false
+    where d.asset_external_id is not null
+      and not exists (
+        select 1 from dbaas_asset a
+        where a.external_id = d.asset_external_id and a.db_name = d.name
+          and a.last_seen_run_id = #{runId}
+      )
+  </update>
+
+  <select id="countAll" resultType="_long">
+    select count(*) from dbaas_asset
+  </select>
+
+  <select id="findByExternalId" resultMap="assetRecord">
+    select external_id, db_name, raw_data from dbaas_asset where external_id = #{externalId}
+  </select>
+
+  <select id="findRebindCandidates" resultMap="assetRecord">
+    select a.external_id, a.db_name, a.raw_data
+    from dbaas_asset a
+    join database_catalog d on d.name = a.db_name
+    where a.last_seen_run_id = #{runId}
+      and d.asset_external_id is not null
+      and not exists (
+        select 1 from dbaas_asset prior_asset
+        where prior_asset.external_id = d.asset_external_id and prior_asset.db_name = d.name
+          and prior_asset.last_seen_run_id = #{runId}
+      )
+      and a.external_id = (
+        select min(candidate.external_id) from dbaas_asset candidate
+        where candidate.db_name = d.name and candidate.last_seen_run_id = #{runId}
+      )
+  </select>
+</mapper>
