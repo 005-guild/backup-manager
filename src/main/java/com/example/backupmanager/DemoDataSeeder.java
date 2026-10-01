@@ -37,7 +37,8 @@ public class DemoDataSeeder implements ApplicationRunner {
 
         for (int number = 1; number <= 64; number++) {
             String name = databaseName(number);
-            long databaseId = catalog.addDatabase(name, firstDay).id();
+            Long databaseId = catalog.addDemoDatabase(name, firstDay);
+            if (databaseId == null) continue;
             setDemoMetadata(databaseId, name, firstDay, number);
             for (int age = 59; age >= 0; age--) {
                 LocalDate date = today.minusDays(age);
@@ -66,7 +67,8 @@ public class DemoDataSeeder implements ApplicationRunner {
 
         for (int number = 1; number <= 8; number++) {
             String name = "DEMO_empty_" + String.format("%03d", number);
-            long databaseId = catalog.addDatabase(name, firstDay).id();
+            Long databaseId = catalog.addDemoDatabase(name, firstDay);
+            if (databaseId == null) continue;
             setDemoMetadata(databaseId, name, firstDay, 64 + number);
         }
         log.info("Demo data ready: 72 databases and {} backup records (idempotent)", records);
@@ -94,6 +96,6 @@ public class DemoDataSeeder implements ApplicationRunner {
             "demo", true, "dbname", name, "status", status, "time", updated.toString()));
         if (!inferred) rawFields.put("backupDate", date.toString());
         String raw = mapper.writeValueAsString(rawFields);
-        catalog.upsertBackup(databaseId, kind, externalId, date, inferred, updated.atZone(ZONE).toInstant(), status, raw);
+        catalog.upsertDemoBackup(databaseId, kind, externalId, date, inferred, updated.atZone(ZONE).toInstant(), status, raw);
     }
 }

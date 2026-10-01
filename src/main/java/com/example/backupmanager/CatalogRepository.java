@@ -16,14 +16,16 @@ public class CatalogRepository {
     private final RuleMapper rules;
     private final SyncRunMapper syncRuns;
     private final UserMapper users;
+    private final DemoDataMapper demoData;
 
     CatalogRepository(DatabaseMapper databases, BackupMapper backups, RuleMapper rules,
-                      SyncRunMapper syncRuns, UserMapper users) {
+                      SyncRunMapper syncRuns, UserMapper users, DemoDataMapper demoData) {
         this.databases = databases;
         this.backups = backups;
         this.rules = rules;
         this.syncRuns = syncRuns;
         this.users = users;
+        this.demoData = demoData;
     }
 
     List<DatabaseRow> databases(String search) {
@@ -53,6 +55,14 @@ public class CatalogRepository {
     DatabaseRow database(long id) {
         return databases.findById(id);
     }
+    Map<String, Object> demoData() {
+        return Compat.mapOf("visible", demoData.isVisible(),
+            "databaseCount", demoData.countDatabases(), "backupCount", demoData.countBackups());
+    }
+    Map<String, Object> setDemoVisible(boolean visible) {
+        if (demoData.setVisible(visible) != 1) throw new IllegalStateException("演示数据设置不存在");
+        return demoData();
+    }
     DatabaseRow addDatabase(String name, LocalDate monitorFrom) {
         if (databaseIdByName(name) == null) {
             Map<String, Object> values = new HashMap<>();
@@ -63,7 +73,14 @@ public class CatalogRepository {
         }
         Long id = databaseIdByName(name);
         if (id == null) throw new IllegalStateException("数据库登记失败");
-        return database(id);
+        DatabaseRow result = database(id);
+        if (result == null) throw new IllegalArgumentException("数据库名称已被隐藏的演示数据占用");
+        return result;
+    }
+    Long addDemoDatabase(String name, LocalDate monitorFrom) {
+        databases.insertDemo(name, monitorFrom);
+        // A real asset or manually created database with the same name must never be seeded over.
+        return databases.findDemoIdByName(name);
     }
     long getOrCreateDatabase(String name, LocalDate firstDate) {
         if (databaseIdByName(name) == null) {
@@ -119,7 +136,15 @@ public class CatalogRepository {
     }
     void upsertBackup(long databaseId, String kind, String externalId, LocalDate backupDate, boolean inferred,
                       Instant eventTime, String status, String raw) {
-        BackupWrite record = new BackupWrite(databaseId, kind, externalId, backupDate, inferred, eventTime, status, raw);
+        upsertBackup(databaseId, kind, externalId, backupDate, inferred, eventTime, status, raw, false);
+    }
+    void upsertDemoBackup(long databaseId, String kind, String externalId, LocalDate backupDate, boolean inferred,
+                          Instant eventTime, String status, String raw) {
+        upsertBackup(databaseId, kind, externalId, backupDate, inferred, eventTime, status, raw, true);
+    }
+    private void upsertBackup(long databaseId, String kind, String externalId, LocalDate backupDate, boolean inferred,
+                              Instant eventTime, String status, String raw, boolean demo) {
+        BackupWrite record = new BackupWrite(databaseId, kind, externalId, backupDate, inferred, eventTime, status, raw, demo);
         if (backups.update(record) > 0) return;
         try {
             backups.insert(record);

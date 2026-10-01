@@ -54,6 +54,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-local-fron
 
 使用 `.local-credentials` 中的账号登录。该文件和 `data/` 均已被 Git 忽略。若数据库中已有历史记录，页面总数可能大于上述演示数据规模。
 
+管理员可在“数据库资产”页面关闭“显示演示数据”开关。关闭后，演示库及其备份会从目录、总览、日历和查询结果中隐藏；原有记录仍保留在数据库中，重新开启即可恢复显示。该设置保存在数据库中，对所有用户生效。`APP_DEMO_SEED=false` 只控制本地模式下次启动时是否生成演示记录，不会清除或隐藏已生成的记录。
+
 ## 已实现功能
 
 - 多用户登录，支持 `ADMIN` 和 `VIEWER` 两种角色，登录会话存放在数据库中。
@@ -68,6 +70,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-local-fron
 - 自动调度和管理员手动同步，保留同步批次、计数及错误信息。
 - 管理员配置规则、登记数据库、维护资产信息和创建用户。
 - 仪表盘展示最近 7 天的缺失、待完成和日期待核记录。
+- 管理员可随时切换演示数据的显示状态，保留原有演示记录。
 
 当前功能边界：
 
@@ -144,9 +147,10 @@ backup-manager/
 | 表 | 用途 | 关键字段 |
 | --- | --- | --- |
 | `app_user` | 应用账号 | `username`、BCrypt `password_hash`、`role`、`enabled` |
-| `database_catalog` | 数据库资产和监控起点 | `name`、`monitor_from`、`active` 及各资产字段 |
+| `database_catalog` | 数据库资产和监控起点 | `name`、`monitor_from`、`active`、`is_demo` 及各资产字段 |
 | `dbaas_asset` | DBAAS 资产原始记录 | `external_id`、`db_name`、`logicdb_code`、`ldbid`、`valid`、`raw_data`、`last_seen_run_id`、首次及最近同步时间 |
-| `backup_record` | 上游备份记录 | `database_id`、`kind`、`external_id`、`backup_date`、`date_inferred`、`event_time`、`status`、`raw_data` |
+| `backup_record` | 上游备份记录 | `database_id`、`kind`、`external_id`、`backup_date`、`date_inferred`、`event_time`、`status`、`is_demo`、`raw_data` |
+| `demo_data_setting` | 演示数据全局显示开关 | `visible` |
 | `backup_rule` | 三类规则 | `kind`、`enabled`、`grace_days`、`retention_days` |
 | `sync_run` | 同步批次 | `kind`、开始/结束时间、状态、拉取数、保存数和错误信息 |
 | `SPRING_SESSION*` | 登录会话 | Spring Session JDBC 标准字段 |
@@ -266,7 +270,7 @@ docker compose up -d --scale backend=2
 | `BACKUP_DAILY_CLEANUP_CRON` | `0 0 2 * * SUN` | 日备元数据清理，每周日 02:00 |
 | `BACKUP_MONTHLY_CLEANUP_CRON` | `0 0 3 1 1 *` | 月备元数据清理，每年 1 月 1 日 03:00 |
 | `DBAAS_ASSET_CRON` | `0 0 0 * * *` | 资产同步 Spring Cron，北京时间每天 00:00 |
-| `APP_DEMO_SEED` | `false` | 仅 `local` Profile 生效的演示数据开关 |
+| `APP_DEMO_SEED` | `false` | 仅 `local` Profile 生效；控制启动时是否生成演示记录，不控制已有记录的显示 |
 | `APP_PORT` | `8080` | Compose 前端发布端口 |
 
 会话默认有效期为 12 小时。`BOOTSTRAP_ADMIN_*` 只在 `app_user` 为空时使用，已有用户时不会覆盖现有密码。
@@ -390,6 +394,8 @@ docker compose up -d --scale backend=2
 | `GET` | `/api/rules` | 登录 | 规则列表 |
 | `GET` | `/api/checks?databaseId=&from=&to=` | 登录 | 指定数据库规则检查，起止日期跨度不超过 366 天 |
 | `GET` | `/api/sync-runs` | 登录 | 最近 50 次同步记录 |
+| `GET` | `/api/admin/demo-data` | 管理员 | 查询演示数据显示状态和数量 |
+| `PUT` | `/api/admin/demo-data` | 管理员 | 设置演示数据是否显示，JSON 请求体为 `{ "visible": false }` |
 | `POST` | `/api/admin/databases` | 管理员 | 登记数据库 |
 | `PUT` | `/api/admin/databases/{id}/metadata` | 管理员 | 更新资产信息 |
 | `PUT` | `/api/admin/rules/{id}` | 管理员 | 更新规则 |

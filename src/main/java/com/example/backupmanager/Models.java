@@ -363,11 +363,16 @@ final class BackupWrite {
     private final Instant eventTime;
     private final String status;
     private final String rawData;
+    private final boolean demo;
     BackupWrite(long databaseId, String kind, String externalId, LocalDate backupDate,
                 boolean dateInferred, Instant eventTime, String status, String rawData) {
+        this(databaseId, kind, externalId, backupDate, dateInferred, eventTime, status, rawData, false);
+    }
+    BackupWrite(long databaseId, String kind, String externalId, LocalDate backupDate,
+                boolean dateInferred, Instant eventTime, String status, String rawData, boolean demo) {
         this.databaseId = databaseId; this.kind = kind; this.externalId = externalId;
         this.backupDate = backupDate; this.dateInferred = dateInferred; this.eventTime = eventTime;
-        this.status = status; this.rawData = rawData;
+        this.status = status; this.rawData = rawData; this.demo = demo;
     }
     public long getDatabaseId() { return databaseId; }
     public String getKind() { return kind; }
@@ -377,6 +382,7 @@ final class BackupWrite {
     public Instant getEventTime() { return eventTime; }
     public String getStatus() { return status; }
     public String getRawData() { return rawData; }
+    public boolean isDemo() { return demo; }
 }
 
 final class SyncRunInsert {

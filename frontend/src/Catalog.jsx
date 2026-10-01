@@ -46,10 +46,13 @@ function CatalogList({ onOpen, admin }) {
     return api(`/api/databases/page?${params}`)
   }, [search, tab, monitorState, framework, page, pageSize])
   const filterOptions = useRemote(() => api('/api/databases/frameworks'), [])
+  const demoSetting = useRemote(() => admin ? api('/api/admin/demo-data') : Promise.resolve(null), [admin])
   const [showAdd, setShowAdd] = useState(false)
   const [name, setName] = useState('')
   const [monitorFrom, setMonitorFrom] = useState(today())
   const [actionError, setActionError] = useState('')
+  const [demoError, setDemoError] = useState('')
+  const [demoBusy, setDemoBusy] = useState(false)
   const rows = catalog.data?.items || []
   const counts = catalog.data?.counts || { all: 0, with: 0, empty: 0 }
   const frameworks = filterOptions.data || []
@@ -73,12 +76,26 @@ function CatalogList({ onOpen, admin }) {
     } catch (problem) { setActionError(problem.message) }
   }
 
+  async function toggleDemoVisibility() {
+    if (!demoSetting.data || demoBusy) return
+    setDemoBusy(true)
+    setDemoError('')
+    try {
+      await api('/api/admin/demo-data', { method: 'PUT', body: { visible: !demoSetting.data.visible } })
+      demoSetting.reload()
+      setPage(0)
+      catalog.reload()
+      filterOptions.reload()
+    } catch (problem) { setDemoError(problem.message) }
+    finally { setDemoBusy(false) }
+  }
+
   return <div className="catalog-page">
-    <div className="catalog-titlebar"><div><div className="catalog-crumb">备份管理 / 数据库资产</div><h1>逻辑数据库</h1><p>查看数据库资产信息与各库的备份覆盖情况</p></div><div className="catalog-title-actions"><span className="data-source-tag">{rows.some(row => row.name.startsWith('DEMO_')) ? '含演示数据' : '数据库目录'}</span><button className="button" onClick={catalog.reload}>刷新数据</button></div></div>
+    <div className="catalog-titlebar"><div><div className="catalog-crumb">备份管理 / 数据库资产</div><h1>逻辑数据库</h1><p>查看数据库资产信息与各库的备份覆盖情况</p></div><div className="catalog-title-actions"><span className="data-source-tag">{admin ? demoSetting.data ? `演示数据已${demoSetting.data.visible ? '显示' : '隐藏'} · ${demoSetting.data.databaseCount} 库 · ${demoSetting.data.backupCount} 条备份` : '正在读取演示数据状态' : rows.some(row => row.name.startsWith('DEMO_')) ? '含演示数据' : '数据库目录'}</span>{admin && <button className="button" type="button" aria-pressed={demoSetting.data?.visible ?? false} title="只切换演示数据的显示状态，原有数据不会删除" disabled={demoBusy || demoSetting.loading || !demoSetting.data} onClick={toggleDemoVisibility}>{demoBusy ? '更新中…' : demoSetting.data?.visible ? '隐藏演示数据' : '显示演示数据'}</button>}<button className="button" onClick={() => { catalog.reload(); filterOptions.reload(); if (admin) demoSetting.reload() }}>刷新数据</button></div></div>
     <section className="catalog-surface">
       <div className="catalog-tabs" role="tablist" aria-label="数据库分类">{tabs.map(([key, label, count]) => <button role="tab" aria-selected={tab === key} className={tab === key ? 'active' : ''} key={key} onClick={() => { setTab(key); setPage(0) }}>{label}<span>（{count}）</span></button>)}</div>
       <div className="catalog-toolbar"><div className="catalog-toolbar-left"><select aria-label="监控状态" value={monitorState} onChange={event => { setMonitorState(event.target.value); setPage(0) }}><option value="">全部监控状态</option><option value="active">监控已启用</option><option value="paused">监控已暂停</option></select><select aria-label="应用框架筛选" value={framework} onChange={event => { setFramework(event.target.value); setPage(0) }}><option value="">全部应用框架</option>{frameworks.map(item => <option key={item}>{item}</option>)}</select><span className="catalog-view-label">逻辑数据库</span></div><div className="catalog-toolbar-right"><label className="catalog-search-label">关键字：<input value={query} onChange={event => setQuery(event.target.value)} placeholder="数据库名 / DBID / DBA" aria-label="搜索数据库" maxLength={255} /></label>{admin && <button className="button primary" onClick={() => setShowAdd(open => !open)}>{showAdd ? '收起' : '+ 登记数据库'}</button>}</div></div>
-      {(actionError || catalog.error || filterOptions.error) && <div className="catalog-error">{actionError || catalog.error || filterOptions.error}</div>}
+      {(demoError || demoSetting.error || actionError || catalog.error || filterOptions.error) && <div className="catalog-error">{demoError || demoSetting.error || actionError || catalog.error || filterOptions.error}</div>}
       {showAdd && <form className="catalog-add-form" onSubmit={addDatabase}><label>数据库名称<input required maxLength={255} value={name} onChange={event => setName(event.target.value)} placeholder="输入逻辑数据库名" /></label><label>开始监控日期<input required type="date" value={monitorFrom} onChange={event => setMonitorFrom(event.target.value)} /></label><button className="button primary">保存并查看详情</button></form>}
       <div className="catalog-table-scroll asset-scroll"><table className="asset-table"><thead><tr><th>逻辑数据库名</th><th>数据库 DBID</th><th>标签</th><th>有效标识</th><th>数据库等级</th><th>应用框架</th><th>数据库版本</th><th>子系统</th><th>开发人员</th><th>DBA</th><th>服务单元</th><th>备份记录</th><th>最近更新</th></tr></thead><tbody>{rows.map(row => <tr key={row.id}><td><button className="asset-name" onClick={() => onOpen(row.id)}>{row.name}</button></td><td className="mono" title={row.dbid || ''}>{value(row.dbid)}</td><td>{row.tag ? <span className="asset-tag">{row.tag}</span> : '—'}</td><td><span className={`asset-online ${row.active ? '' : 'offline'}`}>{row.active && row.lifecycleStatus && <i />}{row.active ? value(row.lifecycleStatus) : '已失效'}</span></td><td>{value(row.securityTier)}</td><td>{value(row.framework)}</td><td>{value(row.dbVersion)}</td><td>{value(row.subsystem)}</td><td title={row.developer || ''}>{value(row.developer)}</td><td title={row.dba || ''}>{value(row.dba)}</td><td title={row.serviceUnit || ''}>{value(row.serviceUnit)}</td><td><span className={`record-count ${row.backupCount === 0 ? 'none' : ''}`}>{row.backupCount}</span></td><td>{dateTime(row.latestEvent)}</td></tr>)}</tbody></table>{catalog.loading && <div className="catalog-loading">正在加载数据库资产…</div>}{!catalog.loading && rows.length === 0 && <div className="catalog-loading">没有符合条件的数据库</div>}</div>
       <div className="catalog-foot"><div>共 {catalog.data?.total ?? 0} 个数据库 · 点击蓝色数据库名查看备份详情</div><div className="catalog-page-controls"><select aria-label="每页数据库数" value={pageSize} onChange={event => { setPageSize(Number(event.target.value)); setPage(0) }}><option value="20">20 条 / 页</option><option value="50">50 条 / 页</option><option value="100">100 条 / 页</option></select><button className="button" disabled={page === 0} onClick={() => setPage(page - 1)}>上一页</button><span>{page + 1} / {pageCount}</span><button className="button" disabled={!catalog.data?.hasMore} onClick={() => setPage(page + 1)}>下一页</button></div></div>

@@ -25,10 +25,10 @@
 
   <sql id="databaseWithSummary">
     select d.*, coalesce(s.backup_count, 0) backup_count, s.latest_event
-    from database_catalog d
+    from visible_database_catalog d
     left join (
       select database_id, count(*) backup_count, max(event_time) latest_event
-      from backup_record
+      from visible_backup_record
       group by database_id
     ) s on s.database_id = d.id
   </sql>
@@ -55,20 +55,20 @@
       <if test="monitorState == 'paused'">and d.active = false</if>
       <if test="framework != null and framework != ''">and d.framework = #{framework}</if>
       <if test="backupState == 'with'">
-        and exists (select 1 from backup_record b where b.database_id = d.id)
+        and exists (select 1 from visible_backup_record b where b.database_id = d.id)
       </if>
       <if test="backupState == 'empty'">
-        and not exists (select 1 from backup_record b where b.database_id = d.id)
+        and not exists (select 1 from visible_backup_record b where b.database_id = d.id)
       </if>
     </where>
   </sql>
 
   <select id="findPage" resultMap="databaseRow">
     select p.*,
-      (select count(*) from backup_record b where b.database_id = p.id) backup_count,
-      (select max(b.event_time) from backup_record b where b.database_id = p.id) latest_event
+      (select count(*) from visible_backup_record b where b.database_id = p.id) backup_count,
+      (select max(b.event_time) from visible_backup_record b where b.database_id = p.id) latest_event
     from (
-      select d.* from database_catalog d
+      select d.* from visible_database_catalog d
       <include refid="pageFilters"/>
       order by d.name, d.id
       limit #{limit} offset #{offset}
@@ -77,29 +77,29 @@
   </select>
 
   <select id="countFiltered" resultType="_long">
-    select count(*) from database_catalog d
+    select count(*) from visible_database_catalog d
     <include refid="pageFilters"/>
   </select>
 
   <select id="findFrameworks" resultType="java.lang.String">
-    select distinct framework from database_catalog
+    select distinct framework from visible_database_catalog
     where framework is not null and framework != ''
     order by framework
   </select>
 
   <select id="findDashboardActive" resultMap="databaseRow">
     select d.*, 0 backup_count, null latest_event
-    from database_catalog d
+    from visible_database_catalog d
     where d.active = true
     order by d.id
   </select>
 
   <select id="findById" resultMap="databaseRow">
     select d.*, coalesce(s.backup_count, 0) backup_count, s.latest_event
-    from database_catalog d
+    from visible_database_catalog d
     left join (
       select database_id, count(*) backup_count, max(event_time) latest_event
-      from backup_record
+      from visible_backup_record
       where database_id = #{id}
       group by database_id
     ) s on s.database_id = d.id
@@ -110,9 +110,20 @@
     select id from database_catalog where name = #{name}
   </select>
 
+  <select id="findDemoIdByName" resultType="java.lang.Long">
+    select id from database_catalog
+    where name = #{name} and is_demo = true and asset_external_id is null
+  </select>
+
   <insert id="insert">
     insert into database_catalog(name, monitor_from, monitor_from_auto)
     values(#{name}, #{monitorFrom}, #{monitorFromAuto})
+    on conflict do nothing
+  </insert>
+
+  <insert id="insertDemo">
+    insert into database_catalog(name, monitor_from, monitor_from_auto, is_demo)
+    values(#{name}, #{monitorFrom}, false, true)
     on conflict do nothing
   </insert>
 
@@ -140,7 +151,7 @@
 
   <update id="bindAsset">
     update database_catalog
-    set asset_external_id = #{asset.externalId}, active = true,
+    set asset_external_id = #{asset.externalId}, active = true, is_demo = false,
         dbid = coalesce(#{asset.metadata.dbid,jdbcType=VARCHAR}, dbid),
         tag = coalesce(#{asset.metadata.tag,jdbcType=VARCHAR}, tag),
         lifecycle_status = coalesce(#{asset.metadata.lifecycleStatus,jdbcType=VARCHAR}, lifecycle_status),
@@ -159,6 +170,6 @@
   <update id="setDemoMonitoring">
     update database_catalog
     set monitor_from = #{monitorFrom}, monitor_from_auto = false
-    where id = #{id} and name = #{name}
+    where id = #{id} and name = #{name} and is_demo = true and asset_external_id is null
   </update>
 </mapper>

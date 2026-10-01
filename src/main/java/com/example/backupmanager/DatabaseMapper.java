@@ -22,7 +22,9 @@ interface DatabaseMapper {
     List<DatabaseRow> findDashboardActive();
     DatabaseRow findById(@Param("id") long id);
     Long findIdByName(@Param("name") String name);
+    Long findDemoIdByName(@Param("name") String name);
     int insert(Map<String, Object> values);
+    int insertDemo(@Param("name") String name, @Param("monitorFrom") LocalDate monitorFrom);
     int moveAutomaticMonitorStart(@Param("name") String name, @Param("firstDate") LocalDate firstDate);
     int updateMetadata(@Param("id") long id, @Param("metadata") DatabaseMetadata metadata);
     int bindAsset(@Param("asset") DbaasAsset asset);

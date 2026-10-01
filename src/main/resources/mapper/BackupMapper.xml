@@ -24,8 +24,8 @@
 
   <select id="find" resultMap="backupRow">
     select b.*, d.name database_name
-    from backup_record b
-    join database_catalog d on d.id = b.database_id
+    from visible_backup_record b
+    join visible_database_catalog d on d.id = b.database_id
     <where>
       <if test="databaseId != null">b.database_id = #{databaseId}</if>
       <if test="from != null">and b.backup_date &gt;= #{from}</if>
@@ -39,8 +39,8 @@
 
   <select id="findForChecks" resultMap="backupRow">
     select b.*, d.name database_name
-    from backup_record b
-    join database_catalog d on d.id = b.database_id
+    from visible_backup_record b
+    join visible_database_catalog d on d.id = b.database_id
     where b.database_id = #{databaseId}
       and b.kind = #{kind}
       and b.backup_date between #{from} and #{to}
@@ -50,8 +50,8 @@
   <select id="findRecentForDashboard" resultMap="backupRow" fetchSize="1000">
     select b.id, b.database_id, d.name database_name, b.kind, b.external_id,
       b.backup_date, b.date_inferred, b.event_time, b.status
-    from backup_record b
-    join database_catalog d on d.id = b.database_id and d.active = true
+    from visible_backup_record b
+    join visible_database_catalog d on d.id = b.database_id and d.active = true
     where b.backup_date between #{from} and #{to}
     order by b.database_id, b.kind, b.backup_date, b.event_time, b.id
   </select>
@@ -64,8 +64,8 @@
       select b.id, b.database_id, d.name database_name, b.kind, b.external_id,
         b.backup_date, b.date_inferred, b.event_time, b.status,
         row_number() over (partition by b.database_id order by b.backup_date desc, b.event_time desc, b.id desc) rank_no
-      from backup_record b
-      join database_catalog d on d.id = b.database_id
+      from visible_backup_record b
+      join visible_database_catalog d on d.id = b.database_id
       where b.database_id in
       <foreach collection="databaseIds" item="databaseId" open="(" separator="," close=")">
         #{databaseId}
@@ -76,14 +76,14 @@
 
   <select id="calendar" resultMap="calendarRow">
     select backup_date, count(*) as backup_count
-    from backup_record
+    from visible_backup_record
     where backup_date between #{from} and #{to}
     group by backup_date
     order by backup_date
   </select>
 
   <select id="countAll" resultType="_long">
-    select count(*) from backup_record
+    select count(*) from visible_backup_record
   </select>
 
   <select id="countBySource" resultType="_long">
@@ -98,19 +98,22 @@
         event_time = #{eventTime},
         status = #{status},
         raw_data = #{rawData},
+        is_demo = #{demo},
         last_seen_at = now()
     where kind = #{kind} and external_id = #{externalId}
   </update>
 
   <insert id="insert">
-    insert into backup_record(database_id, kind, external_id, backup_date, date_inferred, event_time, status, raw_data)
-    values(#{databaseId}, #{kind}, #{externalId}, #{backupDate}, #{dateInferred}, #{eventTime}, #{status}, #{rawData})
+    insert into backup_record(database_id, kind, external_id, backup_date, date_inferred, event_time, status, raw_data, is_demo)
+    values(#{databaseId}, #{kind}, #{externalId}, #{backupDate}, #{dateInferred}, #{eventTime}, #{status}, #{rawData}, #{demo})
   </insert>
 
   <delete id="deleteOlderThan">
     delete from backup_record
     where kind = #{kind}
       and kind in ('daily', 'monthly')
+      and is_demo = false
+      and database_id not in (select id from database_catalog where is_demo = true)
       and backup_date &lt; #{cutoff}
   </delete>
 </mapper>

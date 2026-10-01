@@ -169,6 +169,18 @@ public class ApiController {
         return rules.checks(requireDatabase(databaseId), from, to, today());
     }
     @GetMapping("/sync-runs") List<SyncRow> syncRuns() { return catalog.syncRuns(50); }
+    @GetMapping("/admin/demo-data") Map<String, Object> demoData() { return catalog.demoData(); }
+    public static class UpdateDemoData {
+        private Boolean visible;
+        public Boolean getVisible() { return visible; }
+        public void setVisible(Boolean visible) { this.visible = visible; }
+    }
+    @PutMapping("/admin/demo-data")
+    Map<String, Object> updateDemoData(@RequestBody UpdateDemoData input) {
+        if (input == null || input.getVisible() == null)
+            throw new IllegalArgumentException("请提供 visible=true 或 visible=false");
+        return catalog.setDemoVisible(input.getVisible());
+    }
     @PostMapping("/admin/sync/daily") Map<String, Object> syncDaily() { return sync.syncDaily(); }
     @PostMapping("/admin/sync/monthly") Map<String, Object> syncMonthly() { return sync.syncMonthly(); }
     @PostMapping("/admin/sync/yearly") Map<String, Object> syncYearly() { return sync.syncYearly(); }
