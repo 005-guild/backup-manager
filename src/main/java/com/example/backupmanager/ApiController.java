@@ -7,6 +7,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -110,9 +111,9 @@ public class ApiController {
 
     @GetMapping("/backups")
     Map<String, Object> backups(@RequestParam(required = false) Long databaseId,
-                                @RequestParam(required = false) LocalDate date,
-                                @RequestParam(required = false) LocalDate from,
-                                @RequestParam(required = false) LocalDate to,
+                                @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+                                @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+                                @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
                                 @RequestParam(defaultValue = "") String kind,
                                 @RequestParam(defaultValue = "") String status,
                                 @RequestParam(defaultValue = "0") int page,
@@ -162,7 +163,8 @@ public class ApiController {
 
     @GetMapping("/checks")
     List<CheckRow> checks(@RequestParam long databaseId,
-                          @RequestParam LocalDate from, @RequestParam LocalDate to) {
+                          @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+                          @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
         if (from.isAfter(to) || ChronoUnit.DAYS.between(from, to) > 366) throw new IllegalArgumentException("检查范围必须在 366 天内");
         return rules.checks(requireDatabase(databaseId), from, to, today());
     }
